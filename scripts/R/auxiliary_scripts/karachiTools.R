@@ -3,7 +3,7 @@
 # in "Beta kernel estimators for density functions" by Song Xi Chen (1999)
 
 # loading the Karachi temperature-humidity data, used to build the distribution
-load('~/isolines_uq/data/dans_data/karachiDatDaily.Rdata')
+load('~/isolines_uq/data/cooley_data/karachiDatDaily.Rdata')
 karachiDat <- karachiDatDaily[c('temp', 'relHum')]
 
 dKarachiBetaKDE <- function(dat=karachiDat, point, b, lbs, ubs) {

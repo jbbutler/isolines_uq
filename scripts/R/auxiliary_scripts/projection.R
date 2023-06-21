@@ -55,3 +55,5 @@ projectContour <- function(contour, dat, base_p, proj_p, mar1Prop, mar2Prop,
 
     return(projcontour)
 }
+
+
