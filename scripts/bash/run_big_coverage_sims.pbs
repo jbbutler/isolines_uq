@@ -7,18 +7,18 @@
 #SBATCH --output=coverage_simulations%j.out
 #SBATCH --error=coverage_simulations%j.err
 #SBATCH --exclusive
-#SBATCH -p regular
+#SBATCH -q regular
 #SBATCH --ntasks-per-node=64
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=butlerj@berkeley.edu
-#SBATCH --constraint=haswell
+#SBATCH --constraint=cpu
 echo "coverage_simulations"
 
 cd ..
 cd R
 cd confidence_regions_procedure
-module load R/4.1.2-conda-4.11.0
-source activate isolines
+module load R
+conda activate isolines
 export OMP_NUM_THREADS=1
 
 R < simulateBaseRegions_create.R  --no-save

@@ -9,23 +9,23 @@ source('/global/homes/j/jbbutler/isolines_uq/scripts/R/confidence_regions_proced
 source('/global/homes/j/jbbutler/isolines_uq/scripts/R/auxiliary_scripts/utils.R')
 source('/global/homes/j/jbbutler/isolines_uq/scripts/R/auxiliary_scripts/karachiTools.R')
 
-path <- '/global/cscratch1/sd/jbbutler/sims/regions/base_confregs_create_tubes/'
+path <- '/pscratch/sd/j/jbbutler/sims/regions/bivt_projexp/base_tubes/'
 
-n_cores <- 15
+n_cores <- 64
 
-ns <- c(100000)
+ns <- c(1000, 10000, 50000, 100000)
 B <- 500
 alphas <- c(0.01, 0.05, 0.1)
-ps <- c(0.01, 0.05, 0.1)
+ps <- c(0.005, 0.001, 0.0001)
 beta_funcs_dict <- list()
 #beta_funcs_dict[[as.character(1/3)]] <- function(n) {return((1/n)^(1/3))}
 beta_funcs_dict[[as.character(1/2)]] <- function(n) {return((1/n)^(1/2))}
-beta_funcs_dict[['sqrt(log(n)/n)']] <- function(n) {return((log(n)/n)^(1/2))}
-distribution <- 'karachi'
+#beta_funcs_dict[['sqrt(log(n)/n)']] <- function(n) {return((log(n)/n)^(1/2))}
+distribution <- 'bivt'
 n_iter <- 500
 
-lbs <- c(50,0)
-ubs <- c(140,100)
+lbs <- c(0,0)
+ubs <- c(15,15)
 gticks <- 400
 grid <- expand.grid(X1 = seq(lbs[1], ubs[1], length.out = gticks),
                     X2 = seq(lbs[2], ubs[2], length.out = gticks))

@@ -8,24 +8,28 @@ source('~/isolines_uq/scripts/R/auxiliary_scripts/distributionIsolines.R')
 
 ###### USER-SPECIFIED PARAMETERS ######
 
-ns <- c(1000, 5000, 10000, 25000, 50000, 100000)
+ns <- c(1000, 10000, 50000, 100000)
 distribution <- 'bivt'
 numCoords <- 500
 load_create_tag <- 'create_tubes'
-base_ps <- c(0.1, 0.05, 0.01)
+base_ps <- c(0.001, 0.005, 0.0001)
 alphas <- c(0.05, 0.1, 0.01)
-beta_func_labs <- c('0.5', 'sqrt(log(n)_div_n)')
-proj_p <- 0.005
+beta_func_labs <- c('0.5')
+proj_ps_lst <- list()
+proj_ps_lst[[as.character(0.005)]]=c(0.001, 0.0001)
+proj_ps_lst[[as.character(0.001)]]=c(0.0001, 0.00001)
+proj_ps_lst[[as.character(0.0001)]]=c(0.00001, 0.000001)
+projs_ps <- c(0.001, 0.0001, 0.00001, 0.000001)
 
 # bounds of grid you used to draw the regions (will be used for drawing true isolines)
-lbs <- c(-2,-2)
-ubs <- c(5,5)
+lbs <- c(0,0)
+ubs <- c(15,15)
 # grid resolution used to draw regions (not used in computations, solely for bookkeeping)
 gticks <- 400
 
 # extents of grid on which the isolines will be drawn
-iso_lbs <- c(-2,-2)
-iso_ubs <- c(10,10)
+iso_lbs <- c(0,0)
+iso_ubs <- c(35,35)
 
 n_cores <- 15
 #######################################
@@ -42,17 +46,17 @@ if (distribution=='bivt'){
 }
 
 # create projected isoline
-isoline <- isolineFunc(numCoords=numCoords, gridUbs=iso_ubs, gridLbs=iso_lbs, prob=proj_p)
+#isoline <- isolineFunc(numCoords=numCoords, gridUbs=iso_ubs, gridLbs=iso_lbs, prob=proj_p)
+
+proj_isolines <- list()
+for (p in projs_ps) {
+    proj_isolines[[as.character(p)]] <- isolineFunc(numCoords=numCoords, gridUbs=iso_ubs, gridLbs=iso_lbs, prob=p)
+}
 
 # loading and saving paths
-load_path <- paste0('/global/cscratch1/sd/jbbutler/sims/regions/proj_confregs_',
-                    load_create_tag, '/', distribution, '/', grid_tag, '/projectingto_', proj_p, '/')
-save_path <- paste0('/global/cscratch1/sd/jbbutler/sims/regions/proj_coverage_',
-                    load_create_tag, '/', distribution, '/')
-dir.create(save_path)
-save_path <- paste0(save_path, grid_tag, '/')
-dir.create(save_path)
-save_path <- paste0(save_path, 'projectingto_', proj_p, '/')
+load_path <- paste0('/pscratch/sd/j/jbbutler/sims/regions/bivt_projexp/proj_tubes/',
+                    distribution, '/', grid_tag, '/')
+save_path <- paste0('/pscratch/sd/j/jbbutler/sims/regions/bivt_projexp/proj_tubes_results/')
 dir.create(save_path)
 
 # get a list of the possible survfunc simulations to load, all differing by sample size
@@ -76,10 +80,10 @@ parallelizedCode <-  function(ind) {
             grepl(alphas, confreg_names) &
             grepl(beta_func_labs, confreg_names)
     sim_confregs <- sim_confregs[mask]
-    res <- vector(mode='list', length=length(sim_confregs))
+    res <- vector(mode='list', length=length(sim_confregs)*length(proj_ps_lst[[1]]))
     # determine coverage for each desired confreg, for this simulation
-    for (i in 1:length(res)) {
-
+    ct <- 1
+    for (i in 1:length(sim_confregs)) {
         confreg <- sim_confregs[[i]]
         sim_lst <- list()
         sim_lst$n <- n
@@ -88,25 +92,32 @@ parallelizedCode <-  function(ind) {
         sim_lst$beta_func <- confreg$beta_func
         sim_lst$sim_num <- ind
         
-	tube_top <- confreg$tube_top
-	tube_bottom <- confreg$tube_bottom
+	proj_ps <- proj_ps_lst[[as.character(confreg$base_p)]]
+        for (proj_p in proj_ps) {
+	    isoline <- proj_isolines[[as.character(proj_p)]]
+	    sim_lst$proj_p <- proj_p
+	    proj_region <- confreg$proj_regions[[paste0('proj_p', proj_p)]]
+	    tube_top <- proj_region$top
+	    tube_bottom <- proj_region$bottom
 
-        comp2xs <- CJ(iso_x=isoline[,1], bott_x=tube_bottom[,1], sorted=FALSE)
-        comp2ys <- CJ(iso_y=isoline[,2], bott_y=tube_bottom[,2], sorted=FALSE)
-        lower_cov <- !any((comp2xs[[1]] <= comp2xs[[2]]) & (comp2ys[[1]] <= comp2ys[[2]]))
-        covered <- lower_cov
+            comp2xs <- CJ(iso_x=isoline[,1], bott_x=tube_bottom[,1], sorted=FALSE)
+            comp2ys <- CJ(iso_y=isoline[,2], bott_y=tube_bottom[,2], sorted=FALSE)
+            lower_cov <- !any((comp2xs[[1]] <= comp2xs[[2]]) & (comp2ys[[1]] <= comp2ys[[2]]))
+            covered <- lower_cov
 
-        if (!is.null(tube_top)) {
-	    comp1xs <- CJ(top_x=tube_top[,1], iso_x=isoline[,1], sorted=FALSE)
-            comp1ys <- CJ(top_y=tube_top[,2], iso_y=isoline[,2], sorted=FALSE)
-	    upper_cov <- !any((comp1xs[[1]] <= comp1xs[[2]]) & (comp1ys[[1]] <= comp1ys[[2]]))
-	    covered <- upper_cov & lower_cov
+            if (!is.null(tube_top)) {
+	        comp1xs <- CJ(top_x=tube_top[,1], iso_x=isoline[,1], sorted=FALSE)
+                comp1ys <- CJ(top_y=tube_top[,2], iso_y=isoline[,2], sorted=FALSE)
+	        upper_cov <- !any((comp1xs[[1]] <= comp1xs[[2]]) & (comp1ys[[1]] <= comp1ys[[2]]))
+	        covered <- upper_cov & lower_cov
+            }
+
+            sim_lst$covered <- covered
+	    res[[ct]] <- sim_lst
+	    ct <- ct + 1
         }
-
-        sim_lst$covered <- covered
-        res[[i]] <- sim_lst
-
     }
+
     results_sim <- do.call(rbind.data.frame, res)
 
     return(results_sim)
@@ -142,15 +153,7 @@ for (j in 1:length(desired_ns)) {
 
 }
 
-#ntag <- paste0('n', paste(ns, collapse='|'))
-#ptag <- paste0('p', paste(ps, collapse='|'))
-#atag <- paste0('alpha', paste(alphas, collapse='|'))
-#btag <- paste0('beta_func', paste(beta_func_labs, collapse='|'))
-#save_name <- paste(c(ntag, ptag, atag, btag), collapse='_')
-
 save_name <- paste0('isolinenumCoords_', numCoords)
 
 total_results <- do.call(rbind.data.frame, total_results)
 saveRDS(total_results, paste0(save_path, save_name, '.RData'))
-
-
