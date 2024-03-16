@@ -57,7 +57,11 @@ drawTubeBound <- function(dat, exceedances, lbs, ubs) {
         poss_xs <- arranged_xs[X1 > last_pt_x & X2 >= new_y]
     
         new_x <- as.numeric(poss_xs[1,1])
-    
+
+        if (is.na(new_x) | is.na(new_y)) {
+            break
+        }
+
         xs[ind] <- last_pt_x
         xs[ind+1] <- new_x
         ys[ind] <- new_y
