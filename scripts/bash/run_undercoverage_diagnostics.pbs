@@ -1,0 +1,27 @@
+#!/bin/bash -l
+
+#SBATCH -A m3318
+#SBATCH --job-name=coverage_simulations
+#SBATCH --time=10:00:00
+#SBATCH --nodes=1
+#SBATCH --output=coverage_simulations%j.out
+#SBATCH --error=coverage_simulations%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=64
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+echo "coverage_simulations"
+
+cd ..
+cd R
+cd confidence_regions_procedure
+cd bootstrap_c
+cd blended_estimator
+cd diagnosing_undercoverage
+module load R
+conda activate isolines
+export OMP_NUM_THREADS=1
+
+R < wrong_distribution_test2.R --no-save

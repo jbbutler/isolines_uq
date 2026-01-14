@@ -1,0 +1,25 @@
+#!/bin/bash -l
+
+#SBATCH -A m3318
+#SBATCH --job-name=coverage_simulations
+#SBATCH --time=06:00:00
+#SBATCH --nodes=1
+#SBATCH --output=coverage_simulations%j.out
+#SBATCH --error=coverage_simulations%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=64
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+echo "coverage_simulations"
+
+cd ..
+cd R
+cd confidence_regions_procedure
+cd adaptive_beta
+module load R
+conda activate isolines
+export OMP_NUM_THREADS=1
+
+R < confregs_coverage_oracle_bivgauss.r  --no-save

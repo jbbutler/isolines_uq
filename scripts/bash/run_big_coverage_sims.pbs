@@ -2,7 +2,7 @@
 
 #SBATCH -A m3318
 #SBATCH --job-name=coverage_simulations
-#SBATCH --time=05:00:00
+#SBATCH --time=08:00:00
 #SBATCH --nodes=1
 #SBATCH --output=coverage_simulations%j.out
 #SBATCH --error=coverage_simulations%j.err
@@ -21,4 +21,4 @@ module load R
 conda activate isolines
 export OMP_NUM_THREADS=1
 
-R < simulateBaseRegions_create.R  --no-save
+R < simulateBaseRegions_newdrawing.R  --no-save
