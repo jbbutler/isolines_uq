@@ -62,10 +62,18 @@ computeExtremeRegion <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbo
         c_estimates[as.character(alpha)] <- c_estimate
     }
 
+    survFunc <- function(x) {
+        survProb <- blendedSurvivalFunc(x, dat, gamma, xi)
+        return(survProb)
+    }
+
     res_lst <- list()
     res_lst$dat <- dat
     res_lst$c_estimates <- c_estimates
     res_lst$p <- p
+    res_lst$gamma <- gamma
+    res_lst$xi <- xi
+    res_lst$survFunc <- survFunc
 
     return(res_lst)
 
@@ -118,10 +126,16 @@ computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
         c_estimates[as.character(alpha)] <- c_estimate
     }
 
+    survFunc <- function(x) {
+        survProb <- mean((dat[,1] > x[1]) & (dat[,2] > x[2]))
+        return(survProb)
+    }
+
     res_lst <- list()
     res_lst$dat <- dat
     res_lst$c_estimates <- c_estimates
     res_lst$p <- p
+    res_lst$survFunc <- survFunc
 
     return(res_lst)
 }
