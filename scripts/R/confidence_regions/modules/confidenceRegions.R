@@ -3,7 +3,6 @@
 #
 # Jimmy Butler
 
-library(ks)
 library(dplyr)
 library(ismev)
 
