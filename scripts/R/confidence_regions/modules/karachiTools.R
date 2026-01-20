@@ -6,7 +6,12 @@
 load('~/isolines_uq/data/cooley_data/karachiDatDaily.Rdata')
 karachiDat <- karachiDatDaily[c('temp', 'relHum')]
 
-dKarachiBetaKDE <- function(dat=karachiDat, point, b, lbs, ubs) {
+# constants to set the lower and upper bounds of the distribution support
+LBS_CONST <- c(50, 0)
+UBS_CONST <- c(140, 100)
+b_CONST <- 0.00073
+
+dKarachiBetaKDE <- function(point, dat=karachiDat, b=b_CONST, lbs=LBS_CONST, ubs=UBS_CONST) {
     # Find the value of the bivariate density of Karachi data at desired point
 
     dat <- data.frame(X=(dat[,1]-lbs[1])/(ubs[1]-lbs[1]),
@@ -26,7 +31,7 @@ dKarachiBetaKDE <- function(dat=karachiDat, point, b, lbs, ubs) {
     return(mean(margXs*margYs))
 }
 
-rKarachiBetaKDE <- function(n, b, dat=karachiDat, ubs, lbs) {
+rKarachiBetaKDE <- function(n, b=b_CONST, dat=karachiDat, ubs=UBS_CONST, lbs=LBS_CONST) {
     # Draw a random sample from the distriubtion of Karachi data
     # First column is temperature, second is relative humidity
 
@@ -49,7 +54,7 @@ rKarachiBetaKDE <- function(n, b, dat=karachiDat, ubs, lbs) {
     return(draws)
 }
 
-pKarachiBetaKDE <- function(dat=karachiDat, point, b, lbs, ubs) {
+pKarachiBetaKDE <- function(point, dat=karachiDat, b=b_CONST, lbs=LBS_CONST, ubs=UBS_CONST) {
     # Find the probability of jointly exceeding a particular point
     # with a particular set of parameters (b, lbs, ubs)
 

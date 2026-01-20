@@ -5,6 +5,8 @@ library(data.table)
 library(ismev)
 library(evd)
 
+source('~/isolines_uq/scripts/R/confidence_regions/modules/karachiTools.R')
+
 # function to evaluate an estimate of a univariate cdf on a set of points
 # uses ecdf for points below the 1-n^(-gamma) quantile, and uses GPD for points above
 est_cdf <- function(x, dat, gamma) {
@@ -64,7 +66,7 @@ loadSamplingFunction <- function(dist) {
         samplingFunction <- function(n) return(data.frame(rmvnorm(n, mean = rep(0, 2), sigma = matrix(c(1, 0.7, 0.7, 1), nrow = 2))))
     }
     if (dist=='karachi') {
-        samplingFunction <- function(n) return(rKarachiBetaKDE(n=n, b=0.00073, ubs=c(140, 100), lbs=c(50, 0)))
+        samplingFunction <- function(n) return(rKarachiBetaKDE(n))
     }
 
     return(samplingFunction)

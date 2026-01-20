@@ -154,7 +154,7 @@ drawKarachiIsoline <- function(numCoords, gridUbs, gridLbs, prob) {
         xCoord <- xCenter + radius*cos(angle)
         yCoord <- yCenter + radius*sin(angle)
 	# optimal bandwidth chosen via 5-fold CV
-        exceedanceProb <- pKarachiBetaKDE(point=c(xCoord, yCoord),lbs=c(50, 0), ubs=c(140, 100), b=0.00073)
+        exceedanceProb <- pKarachiBetaKDE(point=c(xCoord, yCoord))
         return(exceedanceProb - prob)
     }
 
