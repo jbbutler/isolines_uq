@@ -1,0 +1,36 @@
+name: isolinesR
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - r-base=4.2
+
+  # Jupyter & Notebook Environment
+  - notebook
+  - jupyter_client
+  - jupyter_core
+  - nbconvert
+  - r-irkernel  # Enables R to run in Jupyter notebooks
+
+  # R I/O
+  - r-argparse
+
+  # R - Statistics
+  - r-ismev # extreme value distributions
+  - r-evd # extreme value distributions
+  - r-mvtnorm # sampling for simulations
+  - r-mnormt
+
+  # R - Computing
+  - r-doparallel
+  - r-foreach
+  - r-dosnow
+  - r-data.table # used for efficient empirical CDF estimation
+
+  # R - Data Science
+  - r-caret # train/validation splits for Karachi data
+  - r-tidyverse
+
+  # R - Visualization & Reporting
+  - r-cowplot
+  - r-gridextra
