@@ -14,7 +14,7 @@ Project to explore estimation and uncertainty quantification of extreme isolines
 1. In the project home directory, run `conda env create -f environment.yml`
 1. Activate the environment with `conda activate isolinesR`
 1. Start an R session with `R`
-1. Run the following commands line-by-line:
+1. Run the following commands line-by-line ([source](https://docs.nersc.gov/development/languages/r/#using-your-own-r-environment-in-jupyter)):
 ```
 > ename <- Sys.getenv('CONDA_DEFAULT_ENV')
 > dname <- trimws(paste("R", getRversion(), Sys.getenv("CONDA_PROMPT_MODIFIER")))
