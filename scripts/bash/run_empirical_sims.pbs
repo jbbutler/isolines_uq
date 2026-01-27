@@ -2,7 +2,7 @@
 
 #SBATCH -A m3318
 #SBATCH --job-name=empirical_coverage_simulations
-#SBATCH --time=36:00:00
+#SBATCH --time=16:00:00
 #SBATCH --nodes=1
 #SBATCH --output=./logs/empirical_coverage_simulations%j.out
 #SBATCH --error=./logs/empirical_coverage_simulations%j.err

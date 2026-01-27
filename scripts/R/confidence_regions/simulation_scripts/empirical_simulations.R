@@ -141,16 +141,17 @@ for (i in 1:length(dists)) {
                         p = p,
                         n = n,
                         alpha = names(res$is_covereds), 
-                        isCovered = res$is_covereds
+                        is_covered = unlist(res$is_covereds, use.names=FALSE)
                     )
                 }))
 
                 # determine if we need to write headers (only if file doesn't exist)
-                file_exists <- file.exists(args$save_df_path)
+                save_fname <- paste0(args$save_df_path, 'empirical_coverage.csv')
+                file_exists <- file.exists(save_fname)
                 
                 # write to CSV using write.table for append support
                 write.table(coverage_df, 
-                            file = paste0(args$save_df_path, 'empirical_coverage.csv'), 
+                            file = save_fname, 
                             sep = ",", 
                             row.names = FALSE, 
                             col.names = !file_exists, # Write headers only if new file
