@@ -34,3 +34,4 @@ dependencies:
   # R - Visualization & Reporting
   - r-cowplot
   - r-gridextra
+  - r-ggpubr
