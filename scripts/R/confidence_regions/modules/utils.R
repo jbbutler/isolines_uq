@@ -7,19 +7,41 @@ library(evd)
 
 source('~/isolines_uq/scripts/R/confidence_regions/modules/karachiTools.R')
 
-# function to evaluate an estimate of a univariate cdf on a set of points
-# uses ecdf for points below the 1-n^(-gamma) quantile, and uses GPD for points above
-est_cdf <- function(x, dat, gamma) {
+est_cdf <- function(x, dat, gamma, method = "ecdf") {
+    # Function to estimate a univariate CDF, with more standard central statistics
+    # methods for non-extreme probabilities, and extremal methods for extreme
+    # probabilities. Defaults to ecdf as the standard central statistical method.
+    
+  if (method == "ecdf") { 
     edf <- ecdf(dat)
-    edf_vals <- edf(x)
-    threshold_prob <- length(dat)^(-gamma)
-    threshold <- quantile(dat, 1-threshold_prob)
-    x_gpd <- x[x > threshold]
-    gpdOut <- ismev::gpd.fit(dat,
-					threshold = threshold, show = F)
-    gpd_probs <- 1-(1-evd::pgpd(x_gpd, loc = gpdOut$threshold, scale = gpdOut$mle[1], shape = gpdOut$mle[2]))*(threshold_prob)
-    edf_vals[x > threshold] <- gpd_probs
-    return(edf_vals)   
+    vals <- edf(x)
+  } else if (method == "kde") {
+    # Bandwidth selection: Silverman's rule-of-thumb (standard for R)
+    bw <- bw.nrd0(dat)
+
+    vals <- vapply(x, function(val) {
+      mean(pnorm(val, mean = dat, sd = bw))
+    }, numeric(1))
+  } else {
+    stop("Method must be either 'ecdf' or 'kde'")
+  }
+  # 2. Determine the threshold for the tail
+  threshold_prob <- length(dat)^(-gamma)
+  threshold <- quantile(dat, 1 - threshold_prob)
+  # 3. Fit GPD to the tail
+  is_tail <- x > threshold
+  if (any(is_tail)) {
+    x_gpd <- x[is_tail]
+    # Fit GPD to the original data above threshold
+    gpdOut <- ismev::gpd.fit(dat, threshold = threshold, show = FALSE)
+    # Calculate GPD tail probabilities
+    tail_probs <- 1-(1-evd::pgpd(x_gpd, 
+                                     loc = gpdOut$threshold, 
+                                     scale = gpdOut$mle[1], 
+                                     shape = gpdOut$mle[2])) * threshold_prob
+    vals[is_tail] <- tail_probs
+  }
+  return(vals)
 }
 
 # the inverse of the above function

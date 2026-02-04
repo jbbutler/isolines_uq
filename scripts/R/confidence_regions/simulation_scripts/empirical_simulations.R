@@ -140,8 +140,9 @@ for (i in 1:length(dists)) {
                         dist = dist,
                         p = p,
                         n = n,
-                        alpha = names(res$is_covereds), 
-                        is_covered = unlist(res$is_covereds, use.names=FALSE)
+                        alpha = names(res$is_covereds),
+                        is_covered = unlist(res$is_covereds, use.names=FALSE),
+                        c_estimate = unlist(res$c_estimates[names(res$is_covereds)])
                     )
                 }))
 
