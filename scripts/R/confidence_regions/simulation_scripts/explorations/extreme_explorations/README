@@ -1,0 +1,2 @@
+marginal_kde.R: a script to perform coverage simulations, but instead of using empirical distribution function in the marginal transformations, it uses a Gaussian KDE. I have a suspicion that using a smooth estimator of the marginals may perform better than the empirical distribution function as the former has less variance across data samples compared to the latter. However, I'm sure there might be some effect of bias from the former that I'm not sure how to deal with..
+
