@@ -4,6 +4,7 @@ library(purrr)
 library(data.table)
 library(ismev)
 library(evd)
+library(matrixStats)
 
 source('~/isolines_uq/scripts/R/confidence_regions/modules/karachiTools.R')
 
@@ -60,6 +61,7 @@ est_inv_cdf <- function(p, dat, gamma) {
 }
 
 # function to estimate the survival function using the blended empirical + regularly varying method
+# function assumes data lives in the nonnegative orthant
 blendedSurvivalFunc <- function(pt, dat, gamma, xi) {
 
     qn <- nrow(dat)^(-gamma)
@@ -69,11 +71,17 @@ blendedSurvivalFunc <- function(pt, dat, gamma, xi) {
         return(empsurv_prob)
     }
     else {
-        theta <- atan(pt[2]/pt[1])
-        empsurvDiff <- function(r) { return(mean((dat[,1] > r*cos(theta)) & (dat[,2] > r*sin(theta)))-qn) }
-        rp <- sqrt(pt[2]**2 + pt[1]**2)
-        rq <- uniroot(empsurvDiff, interval=c(0, rp))$root
-
+        theta <- atan2(pt[2], pt[1]) 
+        c_theta <- cos(theta)
+        s_theta <- sin(theta)
+        # project each data point onto this ray
+        # handle points that are on either axis
+        proj_x <- if(abs(c_theta) < 1e-10) rep(Inf, nrow(dat)) else dat[,1]/c_theta
+        proj_y <- if(abs(s_theta) < 1e-10) rep(Inf, nrow(dat)) else dat[,2]/s_theta
+        Z <- pmin(proj_x, proj_y)
+        # rq is the radius on the qn isoline
+        rq <- quantile(Z, probs=1-qn, type=1, names=FALSE)
+        rp <- sqrt(sum(pt^2))
         return(((rq/rp)^(1/xi))*qn)
     }
 }
@@ -116,35 +124,25 @@ computeEmpSurvIrregular <- function(region, dat) {
 # function that selects points from an empirical isoline (from the empirical survival function)
 # function that draws a grid of points over which we wish to evaluate the sup difference between
 # the true survival function (in bootstrap world) and the empirical estimate (bootstrap survival function in bootstrap world)
-drawEmpiricalIsoline <- function(dat, n_coords, gridLbs, p) {
+drawEmpiricalIsoline <- function(dat, n_coords, grid_lbs, p) {
+
+    # recenter data coordinate system for polar transformation
+    dat_shifted <- sweep(dat, 2, grid_lbs, "-")
     
-    # function that we will use our root-finding algorithm for
-    empSurvFixedCoord <- function(radius, angle, prob, xCenter, yCenter) {
-        xCoord <- xCenter + radius*cos(angle)
-        yCoord <- yCenter + radius*sin(angle)
-        exceedanceProb <- mean((dat[,1] > xCoord) & (dat[,2] > yCoord))
-        return(exceedanceProb - prob)
-    }
-    
-    radii <- rep(NA, n_coords)
     angles <- seq(0, pi/2, length.out=n_coords)
-    max_dat_r <- max(10 + sqrt((dat[,1]**2) + (dat[,2]**2)))
-    gridUbs <- c(max_dat_r, max_dat_r)
-    maxRad <- sqrt(sum((max_dat_r-gridLbs)**2))
+    inv_cos <- 1/cos(angles)
+    inv_sin <- 1/sin(angles)
 
-    # for each angle in first quadrant, find radius that gives a point with desired exceedance probability
-    # by finding roots of pmvtFixedCoord given the angle
-    # find both the lower and upper radius, and then store a mesh of them
-    for (i in 1:n_coords) {
-        radii[i] <- uniroot(empSurvFixedCoord, interval=c(0, maxRad), angle=angles[i],
-                             prob=p, xCenter=gridLbs[1], yCenter=gridLbs[2])$root
-    }
+    proj_x <- dat_shifted[,1] %o% inv_cos
+    proj_y <- dat_shifted[,2] %o% inv_sin
 
-    # convert back to cartesian coordinates
-    X1 <- radii*cos(angles) + gridLbs[1]
-    X2 <- radii*sin(angles) + gridLbs[2]
-    return(data.frame(cbind(X1, X2)))
-    
+    Z_matrix <- pmin(proj_x, proj_y)
+    radii <- colQuantiles(Z_matrix, probs=1-p, type=1, drop=TRUE)
+
+    iso_pts_x <- radii*cos(angles) + grid_lbs[1]
+    iso_pts_y <- radii*sin(angles) + grid_lbs[2]
+
+    return(data.frame(X1=iso_pts_x, X2=iso_pts_y))
 }
 
 # function to draw the isoline estimate using the blended empirical + regularly varying method

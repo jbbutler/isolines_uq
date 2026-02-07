@@ -26,6 +26,7 @@ dependencies:
   - r-foreach
   - r-dosnow
   - r-data.table # used for efficient empirical CDF estimation
+  - r-matrixstats
 
   # R - Data Science
   - r-caret # train/validation splits for Karachi data
