@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH -A m3318
+#SBATCH -A dasrepo
 #SBATCH --job-name=extreme_coverage_simulations
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
