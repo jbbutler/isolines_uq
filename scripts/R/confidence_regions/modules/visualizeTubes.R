@@ -29,11 +29,11 @@ drawEmpiricalTubes <- function(tube_obj, alpha, lbs=c(0,0), n_coords=200) {
         c_est <- c_estimates[[alpha]]
         tube_upper <- drawEmpiricalIsoline(dat=dat, 
                               n_coords=n_coords, 
-                              gridLbs=lbs, 
+                              grid_lbs=lbs, 
                               p=c_estimates[[alpha]] + p)
         tube_lower <- drawEmpiricalIsoline(dat=dat, 
                               n_coords=n_coords, 
-                              gridLbs=lbs, 
+                              grid_lbs=lbs, 
                               p= -c_estimates[[alpha]] + p)
     }
     lst <- list()
@@ -73,14 +73,14 @@ drawExtremeTubes <- function(tube_obj, alpha, lbs=c(0,0), n_coords=200) {
         tube_upper <- drawExtremeIsoline(dat=dat, 
                               p=p + c_est,
                               n_coords=n_coords,
-                              gridLbs=lbs, 
+                              grid_lbs=lbs, 
                               gamma=gamma,
                               xi=xi)
 
         tube_lower <- drawExtremeIsoline(dat=dat, 
                               p= p - c_est,
                               n_coords=n_coords,
-                              gridLbs=lbs, 
+                              grid_lbs=lbs, 
                               gamma=gamma,
                               xi=xi)
     }

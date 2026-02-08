@@ -153,10 +153,9 @@ drawEmpiricalIsoline <- function(dat, n_coords, grid_lbs, p) {
 # gridUbs: the upper bounds of the grid that will contain the full isoline
 # gamma: parameter controlling how far into the tail you will be using empirical df
 # xi: 1/the index of regular variation, EV index
-drawExtremeIsoline <- function(dat, p, n_coords, gridLbs, gamma, xi) {
-    
-    q <- nrow(dat)^(-gamma)
-    q_isoline <- drawEmpiricalIsoline(dat, n_coords, gridLbs, q)
+drawExtremeIsoline <- function(dat, p, n_coords, grid_lbs, gamma, xi) {
+    fq <- nrow(dat)^(-gamma)
+    q_isoline <- drawEmpiricalIsoline(dat, n_coords, grid_lbs, q)
     p_isoline <- q_isoline*((q/p)^(xi))
     
     return(p_isoline)

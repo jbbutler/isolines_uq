@@ -30,7 +30,7 @@ computeExtremeRegion <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbo
     # A list with (1) the original data, (2) a vector of c_hat estimates, one for each alpha supplied.
     # (3) the desired exceedance probability
 
-    ext_isoline <- drawExtremeIsoline(dat, p, n_coords=200, gridLbs=lbs, gamma, xi)
+    ext_isoline <- drawExtremeIsoline(dat, p, n_coords=200, grid_lbs=lbs, gamma, xi)
     boot_draws <- rep(NA, B)
 
     if (verbose) {
@@ -99,7 +99,7 @@ computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
     # A list with (1) the original data, (2) a list of the c_hat estimates, one for each supplied alpha,
     # and (3) the desired exceedance probability.
 
-    emp_isoline <- drawEmpiricalIsoline(dat=dat, n_coords=200, gridLbs=lbs, p)
+    emp_isoline <- drawEmpiricalIsoline(dat=dat, n_coords=200, grid_lbs=lbs, p)
     boot_draws <- rep(NA, B)
 
     if (verbose) {
