@@ -2,7 +2,7 @@
 
 #SBATCH -A dasrepo
 #SBATCH --job-name=extreme_coverage_simulations
-#SBATCH --time=09:00:00
+#SBATCH --time=03:00:00
 #SBATCH --nodes=1
 #SBATCH --output=./logs/rv_tests_simulations%j.out
 #SBATCH --error=./logs/rv_tests_simulations%j.err

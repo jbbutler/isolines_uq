@@ -3,7 +3,7 @@
 # Jimmy Butler
 # January 2026
 
-evaluateCoverage <- function(tube_obj, true_iso) {
+evaluateCoverage <- function(tube_obj, true_iso, extreme=FALSE) {
     # Function to evaluate whether a supplied true isoline is
     # coverged by a confidence tube passed in.
     #
@@ -11,6 +11,8 @@ evaluateCoverage <- function(tube_obj, true_iso) {
     #     tube_obj: a list containing components to define the tube (outputs of computeExtremeRegion
     #         and computeEmpiricalRegion)
     #     true_iso: a data.frame of points on the true_isoline you wish to cover
+    #     extreme: whether we are evaluating coverage for a tube drawn using extreme method. If so, we will need
+    #         to transform the isoline and evaluate coverage in the transformed space.
     #
     # Outputs:
     #     whether the isoline is covered (a list for each alpha supplied)
@@ -20,8 +22,15 @@ evaluateCoverage <- function(tube_obj, true_iso) {
     p <- tube_obj$p
     survFunc <- tube_obj$survFunc
 
+    # if evaluating coverage for an extreme tube, need to transform isoline
+    if (extreme) {
+        true_iso_X1 <- tube_obj$transform_func1(true_iso[,1])
+        true_iso_X2 <- tube_obj$transform_func2(true_iso[,2])
+        true_iso <- data.frame(X1=true_iso_X1, X2=true_iso_X2)
+    }
+
     # estimate survival function at points of true isoline
-    est_survfunc <- apply(true_iso, 1, survFunc)
+    est_survfunc <- survFunc(true_iso)
     
     isCovereds <- list()
 

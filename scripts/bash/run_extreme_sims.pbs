@@ -1,11 +1,11 @@
 #!/bin/bash -l
 
 #SBATCH -A dasrepo
-#SBATCH --job-name=extreme_coverage_simulations
-#SBATCH --time=24:00:00
+#SBATCH --job-name=extreme_coverage_simulations_twowaysplit_kde_margs
+#SBATCH --time=05:00:00
 #SBATCH --nodes=1
-#SBATCH --output=./logs/extreme_coverage_simulations%j.out
-#SBATCH --error=./logs/extreme_coverage_simulations%j.err
+#SBATCH --output=./logs/extreme_coverage_simulations_threewaysplit%j.out
+#SBATCH --error=./logs/extreme_coverage_simulations_threewaysplit%j.err
 #SBATCH --exclusive
 #SBATCH -q regular
 #SBATCH --ntasks-per-node=64
@@ -17,13 +17,11 @@ cd ..
 cd R
 cd confidence_regions
 cd simulation_scripts
-cd explorations
-cd extreme_explorations
 module load R
-conda activate isolines
+conda activate isolinesR
 export OMP_NUM_THREADS=1
 
-FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extreme_kde_margs/"
-DF_SAVE_PATH="~/isolines_uq/outputs/simulations/extreme_kde_margs/"
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal_twoway_split/kde_margs/"
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/"
 
-Rscript marginal_kde.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64
+Rscript extremal_simulations_twowaysplit_kde_margs.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

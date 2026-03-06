@@ -1,8 +1,8 @@
 #!/bin/bash -l
 
-#SBATCH -A m3318
+#SBATCH -A dasrepo
 #SBATCH --job-name=empirical_coverage_simulations
-#SBATCH --time=18:00:00
+#SBATCH --time=05:00:00
 #SBATCH --nodes=1
 #SBATCH --output=./logs/empirical_coverage_simulations%j.out
 #SBATCH --error=./logs/empirical_coverage_simulations%j.err
@@ -21,7 +21,7 @@ module load R
 conda activate isolinesR
 export OMP_NUM_THREADS=1
 
-FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/empirical/"
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/empirical_extreme_comparison/"
 DF_SAVE_PATH="~/isolines_uq/outputs/simulations/"
 
-Rscript empirical_simulations.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64
+Rscript empirical_simulations_extreme_comp.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

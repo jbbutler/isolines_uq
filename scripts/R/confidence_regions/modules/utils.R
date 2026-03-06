@@ -17,7 +17,7 @@ est_cdf <- function(x, dat, gamma, method = "ecdf") {
     edf <- ecdf(dat)
     vals <- edf(x)
   } else if (method == "kde") {
-    # Bandwidth selection: Silverman's rule-of-thumb (standard for R)
+      
     bw <- bw.nrd0(dat)
 
     vals <- vapply(x, function(val) {
@@ -71,16 +71,21 @@ blendedSurvivalFunc <- function(pt, dat, gamma, xi) {
         return(empsurv_prob)
     }
     else {
-        theta <- atan2(pt[2], pt[1]) 
-        c_theta <- cos(theta)
-        s_theta <- sin(theta)
-        # project each data point onto this ray
-        # handle points that are on either axis
-        proj_x <- if(abs(c_theta) < 1e-10) rep(Inf, nrow(dat)) else dat[,1]/c_theta
-        proj_y <- if(abs(s_theta) < 1e-10) rep(Inf, nrow(dat)) else dat[,2]/s_theta
-        Z <- pmin(proj_x, proj_y)
-        # rq is the radius on the qn isoline
-        rq <- quantile(Z, probs=1-qn, type=1, names=FALSE)
+        pos_orthant_mask <- (dat[,1] > 0) & (dat[,2] > 0)
+        theta <- atan2(pt[2], pt[1])
+        # handle theta = 0, pi/2 cases separately
+        if (theta == 0) {
+            M <- dat[,1]*pos_orthant_mask
+            rq <- quantile(M, probs=1-qn, names=FALSE, type=1)
+        } else if (theta == pi/2) {
+            M <- dat[,2]*pos_orthant_mask
+            rq <- quantile(M, probs=1-qn, names=FALSE, type=1)
+        } else {
+            proj_x <- dat[,1]/cos(theta)
+            proj_y <- dat[,2]/sin(theta)
+            M <- pmin(proj_x, proj_y)
+            rq <- quantile(M, probs=1-qn, type=1, names=FALSE)
+        }
         rp <- sqrt(sum(pt^2))
         return(((rq/rp)^(1/xi))*qn)
     }
@@ -106,7 +111,7 @@ loadSamplingFunction <- function(dist) {
 # a regular grid
 # works by converting all of the points to a regular grid, doing a fast empirical survival function operation
 # and then taking only those points we were interested in in the first place
-computeEmpSurvIrregular <- function(region, dat) {
+vectorizedEmpSurv <- function(region, dat) {
     
     sup_reg_xs_unique <- sort(unique(region$X1))
     sup_reg_ys_unique <- sort(unique(region$X2))
@@ -121,6 +126,59 @@ computeEmpSurvIrregular <- function(region, dat) {
     return(res$surv)
 }
 
+vectorizedBlendedSurv <- function(pts, dat, gamma, xi) {
+    # Function to compute the blended survival function in vectorized fashion.
+    # Assuming that the origin is (0,0).
+
+    if (any(pts < 0)) {
+        stop('Error: some points outside the nonnegative orthant.')
+    }
+
+    qn <- nrow(dat)^(-gamma)
+    # compute empsurv value for all points
+    match_x <- outer(dat[,1], pts[,1], ">") 
+    match_y <- outer(dat[,2], pts[,2], ">")
+    empsurv_probs <- colMeans(match_x & match_y)
+
+    pos_orthant_mask <- (dat[,1] > 0) & (dat[,2] > 0)
+    # compute projections of data onto radii of desired points
+    theta <- atan2(pts[,2], pts[,1])
+    # preallocate the list of radii
+    rq <- rep(NA, length(theta))
+    # if any 0s or pi/2, handle those separately
+    if (any(theta == 0)) {
+        ind_0 <- which(theta == 0)
+        M_0 <- dat[,1]*pos_orthant_mask
+        rq_0 <- quantile(M_0, probs=1-qn, names=FALSE, type=1)
+        rq[ind_0] <- rq_0
+    }
+    if (any(theta == pi/2)) {
+        ind_90 <- which(theta == pi/2)
+        M_90 <- dat[,2]*pos_orthant_mask
+        rq_90 <- quantile(M_90, probs=1-qn, names=FALSE, type=1)
+        rq[ind_90] <- rq_90
+    }
+    
+    inds_no_ax <- which(!(theta == 0 | theta == pi/2))
+    # otherwise, handle all angles which are neither 0 nor pi/2
+    if (length(inds_no_ax) > 0) {
+        angles_no_ax <- theta[!(theta == 0 | theta == pi/2)] 
+        rp <- sqrt(rowSums(pts^2))
+        inv_cos <- 1/cos(angles_no_ax)
+        inv_sin <- 1/sin(angles_no_ax)
+        proj_x <- dat[,1] %o% inv_cos
+        proj_y <- dat[,2] %o% inv_sin
+
+        M_int <- pmin(proj_x, proj_y)
+        rq[inds_no_ax] <- colQuantiles(M_int, probs=1-qn, type=1, drop=TRUE)
+    }
+
+    tail_probs <- ((rq/rp)^(1/xi))*qn
+    exceedance_probs <- ifelse(empsurv_probs >= qn, empsurv_probs, tail_probs)
+
+    return(exceedance_probs)
+}
+
 # function that selects points from an empirical isoline (from the empirical survival function)
 # function that draws a grid of points over which we wish to evaluate the sup difference between
 # the true survival function (in bootstrap world) and the empirical estimate (bootstrap survival function in bootstrap world)
@@ -128,16 +186,27 @@ drawEmpiricalIsoline <- function(dat, n_coords, grid_lbs, p) {
 
     # recenter data coordinate system for polar transformation
     dat_shifted <- sweep(dat, 2, grid_lbs, "-")
-    
-    angles <- seq(0, pi/2, length.out=n_coords)
-    inv_cos <- 1/cos(angles)
-    inv_sin <- 1/sin(angles)
 
+    angles <- seq(0, pi/2, length.out=n_coords)
+    # handle angles between 0 and pi/2 exclusive
+    angles_no_ax <- angles[2:(n_coords-1)]
+    inv_cos <- 1/cos(angles_no_ax)
+    inv_sin <- 1/sin(angles_no_ax)
+    
     proj_x <- dat_shifted[,1] %o% inv_cos
     proj_y <- dat_shifted[,2] %o% inv_sin
+    
+    M_int <- pmin(proj_x, proj_y)
 
-    Z_matrix <- pmin(proj_x, proj_y)
-    radii <- colQuantiles(Z_matrix, probs=1-p, type=1, drop=TRUE)
+    # handle 0 and pi/2
+    pos_orthant_mask <- (dat_shifted[,1] > 0) & (dat_shifted[,2] > 0)
+    M_0 <- dat_shifted[,1]*pos_orthant_mask
+    M_90 <- dat_shifted[,2]*pos_orthant_mask
+
+    # stitch together into the same matrix
+    M <- cbind(M_0, M_int, M_90)
+    colnames(M) <- NULL
+    radii <- colQuantiles(M, probs=1-p, type=1, drop=TRUE)
 
     iso_pts_x <- radii*cos(angles) + grid_lbs[1]
     iso_pts_y <- radii*sin(angles) + grid_lbs[2]
@@ -154,12 +223,11 @@ drawEmpiricalIsoline <- function(dat, n_coords, grid_lbs, p) {
 # gamma: parameter controlling how far into the tail you will be using empirical df
 # xi: 1/the index of regular variation, EV index
 drawExtremeIsoline <- function(dat, p, n_coords, grid_lbs, gamma, xi) {
-    fq <- nrow(dat)^(-gamma)
+    q <- nrow(dat)^(-gamma)
     q_isoline <- drawEmpiricalIsoline(dat, n_coords, grid_lbs, q)
     p_isoline <- q_isoline*((q/p)^(xi))
     
     return(p_isoline)
-    
 }
 
 # function that draws a grid of points over which we wish to evaluate the sup difference between

@@ -30,27 +30,66 @@ computeExtremeRegion <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbo
     # A list with (1) the original data, (2) a vector of c_hat estimates, one for each alpha supplied.
     # (3) the desired exceedance probability
 
-    ext_isoline <- drawExtremeIsoline(dat, p, n_coords=200, grid_lbs=lbs, gamma, xi)
+    # define a function for the transfomr
+    transform <- function(pts, marginal_dat) {
+        transformed_pts <- 1/(1-est_cdf(pts, marginal_dat, gamma)) - 1
+        return(transformed_pts)
+    }
+
+    # define a function for the inverse transform
+    inv_transform <- function(pts, marginal_dat) {
+        orig_pts <- est_inv_cdf(pts/(1+pts), dat=marginal_dat, gamma=gamma)
+        return(orig_pts)
+    }
+
+    # transform the data. We will now only work with the transformed data.
+    transformed_dat_X1 <- transform(dat[,1], dat[,1])
+    transformed_dat_X2 <- transform(dat[,2], dat[,2])
+    transformed_dat <- data.frame(X1=transformed_dat_X1, X2=transformed_dat_X2)
+
+    ext_isoline <- drawExtremeIsoline(transformed_dat, p, n_coords=200, grid_lbs=lbs, gamma, xi)
     boot_draws <- rep(NA, B)
+
+    theta <- atan2(ext_isoline[,2], ext_isoline[,1])
+    rp <- sqrt(rowSums(ext_isoline^2))
+    inv_cos <- 1/cos(theta)
+    inv_sin <- 1/sin(theta)
+
+    proj_x <- transformed_dat[,1] %o% inv_cos
+    proj_y <- transformed_dat[,2] %o% inv_sin
+    Z_static <- pmin(proj_x, proj_y)
+
+    match_x <- outer(dat[,1], ext_isoline[,1], '>')
+    match_y <- outer(dat[,2], ext_isoline[,2], '>')
+    hit_static <- (match_x & match_y)*1
+
+    n_dat <- nrow(transformed_dat)
+    qn <- n_dat^(-gamma)
 
     if (verbose) {
         pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
         for (k in 1:B) {
-            boot_dat <- dat %>% sample_frac(1, replace = TRUE)
-            boot_survfunc <- apply(ext_isoline, 1, 
-                                   blendedSurvivalFunc, dat=boot_dat, 
-                                   gamma=gamma, xi=xi)
-            boot_draws[k] <- max(abs(boot_survfunc - p))
+            idx <- sample.int(n_dat, n_dat, replace=TRUE)
+            Z_boot <- Z_static[idx, , drop=FALSE]
+            hit_boot <- hit_static[idx, , drop=FALSE]
+            emp_probs <- colMeans(hit_boot)
+            rq <- colQuantiles(Z_boot, probs=1-qn, type=1, drop=TRUE)
+            tail_probs <- (rq/rp)*qn
+            final_probs <- ifelse(emp_probs >= qn, emp_probs, tail_probs)
+            boot_draws[k] <- max(abs(final_probs - p))
             utils::setTxtProgressBar(pb, k)
         }
         close(pb)
     } else {
         for (k in 1:B) {
-            boot_dat <- dat %>% sample_frac(1, replace = TRUE)
-            boot_survfunc <- apply(ext_isoline, 1, 
-                                   blendedSurvivalFunc, dat=boot_dat, 
-                                   gamma=gamma, xi=xi)
-            boot_draws[k] <- max(abs(boot_survfunc - p))
+            idx <- sample.int(n_dat, n_dat, replace=TRUE)
+            Z_boot <- Z_static[idx, , drop=FALSE]
+            hit_boot <- hit_static[idx, , drop=FALSE]
+            emp_probs <- colMeans(hit_boot)
+            rq <- colQuantiles(Z_boot, probs=1-qn, type=1, drop=TRUE)
+            tail_probs <- (rq/rp)*qn
+            final_probs <- ifelse(emp_probs >= qn, emp_probs, tail_probs)
+            boot_draws[k] <- max(abs(final_probs - p))
         }
     }
 
@@ -61,13 +100,19 @@ computeExtremeRegion <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbo
         c_estimates[as.character(alpha)] <- c_estimate
     }
 
-    survFunc <- function(x) {
-        survProb <- blendedSurvivalFunc(x, dat, gamma, xi)
+    # store the vectorized survival function computed on your dataset
+    # to be used to easily compute coverage of a desired isoline
+    survFunc <- function(pts) {
+        survProb <- vectorizedBlendedSurv(pts, transformed_dat, gamma, xi)
         return(survProb)
     }
 
     res_lst <- list()
     res_lst$dat <- dat
+    res_lst$transform_func1 <- function(pts) transform(pts, dat[,1])
+    res_lst$transform_func2 <- function(pts) transform(pts, dat[,2])
+    res_lst$inv_transform_func1 <- function(pts) inv_transform(pts, dat[,1])
+    res_lst$inv_transform_func2 <- function(pts) inv_transform(pts, dat[,2])
     res_lst$c_estimates <- c_estimates
     res_lst$p <- p
     res_lst$gamma <- gamma
@@ -76,6 +121,558 @@ computeExtremeRegion <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbo
 
     return(res_lst)
 
+}
+
+computeExtremeRegionSplit <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbose=FALSE) {
+    # Function that constructs confidence tube(s) given a particular dataset and a desired isoline
+    # exceedance probability p. Multiple confidence tubes will be returned if multiple alphas are
+    # supplied, one for each alpha. NOTE: this function computes c_hat, an estimate of the worst-case difference
+    # between the estimated survival function and the true survival function over the set of points corresponding
+    # to the desired true isoline. This quantity + the dataset defines the confidence tube: to actually draw it
+    # visually, use the drawExtremeRegion function.
+    # 
+    # HOW THIS DIFFERS FROM OTHER FUNCTIONS: we split the sample in half: half used to estimate isoline, half for bootstrap
+    # resampling
+    #
+    # Arguments:
+    # dat: the data, in the form of a 2-column R data.frame
+    # alphas: a vector of alphas indicating desired probability of miscoverage
+    # (0.01 for 99% CI, 0.05 for 95% CI, etc.). NOTE: even if only one alpha desired, must put it in a vector.
+    # p: the desired p-isoline you wish to capture
+    # B: the number of bootstrap replicates in determining c_hat
+    # lbs: the lower lefthand corner of your space
+    # gamma: 1/n^(gamma), controls the smallest probability to use empirical df
+    # xi: extreme value index
+    # verbose: progress bar for bootstrap loop?
+    #
+    # Output:
+    # A list with (1) the original data, (2) a vector of c_hat estimates, one for each alpha supplied.
+    # (3) the desired exceedance probability
+
+    n_dat <- nrow(dat)
+    split_size <- floor(n_dat/2)
+    split1 <- sample(seq_len(n_dat), size=split_size, replace=FALSE)
+    iso_dat <- dat[split1,]
+    boot_dat <- dat[-split1,]
+    
+    ext_isoline <- drawExtremeIsoline(iso_dat, p, n_coords=200, grid_lbs=lbs, gamma, xi)
+    boot_draws <- rep(NA, B)
+
+    theta <- atan2(ext_isoline[,2], ext_isoline[,1])
+    rp <- sqrt(rowSums(ext_isoline^2))
+    inv_cos <- 1/cos(theta)
+    inv_sin <- 1/sin(theta)
+
+    proj_x <- boot_dat[,1] %o% inv_cos
+    proj_y <- boot_dat[,2] %o% inv_sin
+    Z_static <- pmin(proj_x, proj_y)
+
+    match_x <- outer(boot_dat[,1], ext_isoline[,1], '>')
+    match_y <- outer(boot_dat[,2], ext_isoline[,2], '>')
+    hit_static <- (match_x & match_y)*1
+
+    n_boot <- nrow(boot_dat)
+    qn <- (n_boot)^(-gamma)
+    if (verbose) pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
+    for (k in 1:B) {
+        idx <- sample.int(n_boot, n_boot, replace=TRUE)
+        Z_boot <- Z_static[idx, , drop=FALSE]
+        hit_boot <- hit_static[idx, , drop=FALSE]
+        emp_probs <- colMeans(hit_boot)
+        rq <- colQuantiles(Z_boot, probs=1-qn, type=1, drop=TRUE)
+        tail_probs <- (rq/rp)*qn
+        final_probs <- ifelse(emp_probs >= qn, emp_probs, tail_probs)
+        boot_draws[k] <- max(abs(final_probs - p))
+        if (verbose) utils::setTxtProgressBar(pb, k)
+    }
+    if (verbose) close(pb)
+
+    c_estimates <- list()
+    for (i in 1:length(alphas)) {
+        alpha <- alphas[i]       
+        c_estimate <- as.numeric(quantile(boot_draws, probs = 1-alpha))
+        c_estimates[as.character(alpha)] <- c_estimate
+    }
+
+    # store the vectorized survival function computed on your dataset
+    # to be used to easily compute coverage of a desired isoline
+    survFunc <- function(pts) {
+        survProb <- vectorizedBlendedSurv(pts, iso_dat, gamma, xi)
+        return(survProb)
+    }
+
+    res_lst <- list()
+    res_lst$trans_dat <- dat
+    res_lst$c_estimates <- c_estimates
+    res_lst$p <- p
+    res_lst$gamma <- gamma
+    res_lst$xi <- xi
+    res_lst$survFunc <- survFunc
+
+    return(res_lst)
+
+}
+
+computeExtremeRegionThreewayIsoBootSurv <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbose=FALSE) {
+    # Function that constructs confidence tube(s) given a particular dataset and a desired isoline
+    # exceedance probability p. Multiple confidence tubes will be returned if multiple alphas are
+    # supplied, one for each alpha. NOTE: this function computes c_hat, an estimate of the worst-case difference
+    # between the estimated survival function and the true survival function over the set of points corresponding
+    # to the desired true isoline. This quantity + the dataset defines the confidence tube: to actually draw it
+    # visually, use the drawExtremeRegion function.
+    # 
+    # HOW THIS DIFFERS FROM OTHER FUNCTIONS: we split the sample in thirds: one for estimating the isoline, one for
+    # bootstrap sampling, and one for constructing the survival function. First two used for chat, last used for survfunc
+    # resampling
+    #
+    # Arguments:
+    # dat: the data, in the form of a 2-column R data.frame
+    # alphas: a vector of alphas indicating desired probability of miscoverage
+    # (0.01 for 99% CI, 0.05 for 95% CI, etc.). NOTE: even if only one alpha desired, must put it in a vector.
+    # p: the desired p-isoline you wish to capture
+    # B: the number of bootstrap replicates in determining c_hat
+    # lbs: the lower lefthand corner of your space
+    # gamma: 1/n^(gamma), controls the smallest probability to use empirical df
+    # xi: extreme value index
+    # verbose: progress bar for bootstrap loop?
+    #
+    # Output:
+    # A list with (1) the original data, (2) a vector of c_hat estimates, one for each alpha supplied.
+    # (3) the desired exceedance probability
+
+    # split sample into three groups: one for transform, one for isoline estimation, one for bootstrapping
+    group_assignments <- dat %>%
+        mutate(group_assignment = sample(rep_len(1:3, length.out = n())))
+
+    survfunc_dat <- group_assignments %>% filter(group_assignment==1) %>% select(-group_assignment)
+    iso_dat <- group_assignments %>% filter(group_assignment==2) %>% select(-group_assignment)
+    boot_dat <- group_assignments %>% filter(group_assignment==3) %>% select(-group_assignment)
+
+    # define the transforms here
+    # the full dataset is transformed using the dataset itself..
+    transform <- function(pts, marginal_dat) {
+        transformed_pts <- 1/(1-est_cdf(pts, marginal_dat, gamma)) - 1
+        return(transformed_pts)
+    }
+    transformed_dat_X1 <- transform(dat[,1], dat[,1])
+    transformed_dat_X2 <- transform(dat[,2], dat[,2])
+    transformed_dat <- data.frame(X1=transformed_dat_X1, X2=transformed_dat_X2)
+
+    inv_transform <- function(pts, marginal_dat) {
+        orig_pts <- est_inv_cdf(pts/(1+pts), dat=marginal_dat, gamma=gamma)
+        return(orig_pts)
+    }
+
+    # transform marginals of isoline, bootstrap, and survfunc datasets
+    transformed_iso_dat <- data.frame(X1=transform(iso_dat[,1], dat[,1]), 
+                                      X2=transform(iso_dat[,2], dat[,2]))
+    transformed_boot_dat <- data.frame(X1=transform(boot_dat[,1], dat[,1]), 
+                                      X2=transform(boot_dat[,2], dat[,2]))
+    transformed_survfunc_dat <- data.frame(X1=transform(survfunc_dat[,1], dat[,1]), 
+                                      X2=transform(survfunc_dat[,2], dat[,2]))
+    
+    ext_isoline <- drawExtremeIsoline(dat=transformed_iso_dat, 
+                                      p=p,
+                                      n_coords=200, 
+                                      grid_lbs=lbs, 
+                                      gamma=gamma, 
+                                      xi=1)
+
+    boot_draws <- rep(NA, B)
+
+    theta <- atan2(ext_isoline[,2], ext_isoline[,1])
+    rp <- sqrt(rowSums(ext_isoline^2))
+
+    n_boot <- nrow(transformed_boot_dat)
+    # preconstruct M matrix for the bootstrap data
+    M_static <- matrix(NA, nrow = n_boot, ncol = length(theta))
+    pos_orthant_mask <- (transformed_boot_dat[,1] > 0) & (transformed_boot_dat[,2] > 0)
+
+    # handle cases of theta = 0, pi/2 separately
+    ind_0 <- which(theta == 0)
+    if (length(ind_0) > 0) {
+        M_static[, ind_0] <- transformed_boot_dat[,1] * pos_orthant_mask
+    }
+    ind_90 <- which(theta == pi/2)
+    if (length(ind_90) > 0) {
+        M_static[, ind_90] <- transformed_boot_dat[,2] * pos_orthant_mask
+    }
+    # handle all other angles now
+    inds_no_ax <- which(!(theta == 0 | theta == pi/2))
+    if (length(inds_no_ax) > 0) {
+        angles_no_ax <- theta[inds_no_ax]
+        inv_cos <- 1/cos(angles_no_ax)
+        inv_sin <- 1/sin(angles_no_ax)
+        
+        proj_x <- transformed_boot_dat[,1] %o% inv_cos
+        proj_y <- transformed_boot_dat[,2] %o% inv_sin
+        M_static[, inds_no_ax] <- pmin(proj_x, proj_y)
+    }
+
+    # for each point (row), is it strictly northeast of each point on isoline (column)
+    match_x <- outer(transformed_boot_dat[,1], ext_isoline[,1], '>')
+    match_y <- outer(transformed_boot_dat[,2], ext_isoline[,2], '>')
+    hit_static <- (match_x & match_y)*1
+
+    qn <- (n_boot)^(-gamma)
+    
+    if (verbose) pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
+    for (k in 1:B) {
+        idx <- sample.int(n_boot, n_boot, replace=TRUE)
+        # sample rows of M_boot and hit_boot in lieu of the actual data
+        M_boot <- M_static[idx, , drop=FALSE]
+        hit_boot <- hit_static[idx, , drop=FALSE]
+        # fraction of strict exceedances over each point on isoline
+        emp_probs <- colMeans(hit_boot)
+        # radii for which 1-qn strict exceedances for each ray on isoline
+        rq <- colQuantiles(M_boot, probs=1-qn, type=1, drop=TRUE)
+        tail_probs <- (rq/rp)*qn
+        final_probs <- ifelse(emp_probs >= qn, emp_probs, tail_probs)
+        boot_draws[k] <- max(abs(final_probs - p))
+        if (verbose) utils::setTxtProgressBar(pb, k)
+    }
+    if (verbose) close(pb)
+
+    c_estimates <- list()
+    for (i in 1:length(alphas)) {
+        alpha <- alphas[i]
+        c_estimate <- as.numeric(quantile(boot_draws, probs = 1-alpha))
+        c_estimates[as.character(alpha)] <- c_estimate
+    }
+
+    # store the vectorized survival function computed on your dataset
+    # to be used to easily compute coverage of a desired isoline
+    survFunc <- function(pts) {
+        survProb <- vectorizedBlendedSurv(pts, transformed_survfunc_dat, gamma, xi)
+        return(survProb)
+    }
+
+    res_lst <- list()
+    res_lst$dat <- dat
+    res_lst$full_dat <- group_assignments
+    res_lst$c_estimates <- c_estimates
+    res_lst$p <- p
+    res_lst$gamma <- gamma
+    res_lst$xi <- xi
+    res_lst$survFunc <- survFunc
+    res_lst$transform_func1 <- function(pts) transform(pts, dat[,1])
+    res_lst$transform_func2 <- function(pts) transform(pts, dat[,2])
+    res_lst$inv_transform_func1 <- function(pts) inv_transform(pts, dat[,1])
+    res_lst$inv_transform_func2 <- function(pts) inv_transform(pts, dat[,2])
+
+    return(res_lst)
+
+}
+
+computeExtremeRegionThreewaySplit <- function(dat, alphas, p, B, gamma, xi, lbs=c(0,0), verbose=FALSE) {
+    # Function that constructs confidence tube(s) given a particular dataset and a desired isoline
+    # exceedance probability p. Multiple confidence tubes will be returned if multiple alphas are
+    # supplied, one for each alpha. NOTE: this function computes c_hat, an estimate of the worst-case difference
+    # between the estimated survival function and the true survival function over the set of points corresponding
+    # to the desired true isoline. This quantity + the dataset defines the confidence tube: to actually draw it
+    # visually, use the drawExtremeRegion function.
+    # 
+    # HOW THIS DIFFERS FROM OTHER FUNCTIONS: we split the sample in thirds: one for estimating marginal distributions for the marginal transformation step, one for estimating the isoline, and one for generating boostrap draws
+    # resampling
+    #
+    # Arguments:
+    # dat: the data, in the form of a 2-column R data.frame
+    # alphas: a vector of alphas indicating desired probability of miscoverage
+    # (0.01 for 99% CI, 0.05 for 95% CI, etc.). NOTE: even if only one alpha desired, must put it in a vector.
+    # p: the desired p-isoline you wish to capture
+    # B: the number of bootstrap replicates in determining c_hat
+    # lbs: the lower lefthand corner of your space
+    # gamma: 1/n^(gamma), controls the smallest probability to use empirical df
+    # xi: extreme value index
+    # verbose: progress bar for bootstrap loop?
+    #
+    # Output:
+    # A list with (1) the original data, (2) a vector of c_hat estimates, one for each alpha supplied.
+    # (3) the desired exceedance probability
+
+    # split sample into three groups: one for transform, one for isoline estimation, one for bootstrapping
+    group_assignments <- dat %>%
+        mutate(group_assignment = sample(rep_len(1:3, length.out = n())))
+
+    trans_dat <- group_assignments %>% filter(group_assignment==1) %>% select(-group_assignment)
+    iso_dat <- group_assignments %>% filter(group_assignment==2) %>% select(-group_assignment)
+    boot_dat <- group_assignments %>% filter(group_assignment==3) %>% select(-group_assignment)
+
+    # the transform: inverse probability transform...
+    # this is no longer using the GPD
+    transform <- function(pts, marginal_dat) {
+        edf <- ecdf(marginal_dat)
+        n_marg <- length(marginal_dat)
+        uniform_dat <- (n_marg/(n_marg+1))*edf(pts) # avoid boundary issues with plugging 1 into a quantile function
+        transformed_pts <- 1/(1-uniform_dat) - 1
+        return(transformed_pts)
+    }
+
+    # inverse transform, using just (n/(n+1))*ecdf as fitted marginal
+    inv_transform <- function(pts, marginal_dat) {
+        n_marg <- length(marginal_dat)
+        unif_scale <- (1-(1/(pts+1)))*((n_marg+1)/n_marg)
+        orig_pts <- quantile(marginal_dat, probs=unif_scale, type=2, names=FALSE)
+        return(orig_pts)
+    }
+
+    # transform isoline drawing and bootstrapping marginals, using trans_dat to fit marginals
+    transformed_iso_dat <- data.frame(X1=transform(iso_dat[,1], trans_dat[,1]), 
+                                      X2=transform(iso_dat[,2], trans_dat[,2]))
+    transformed_boot_dat <- data.frame(X1=transform(boot_dat[,1], trans_dat[,1]), 
+                                      X2=transform(boot_dat[,2], trans_dat[,2]))
+    
+    ext_isoline <- drawExtremeIsoline(dat=transformed_iso_dat, 
+                                      p=p,
+                                      n_coords=200, 
+                                      grid_lbs=lbs, 
+                                      gamma=gamma, 
+                                      xi=1)
+
+    boot_draws <- rep(NA, B)
+
+    theta <- atan2(ext_isoline[,2], ext_isoline[,1])
+    rp <- sqrt(rowSums(ext_isoline^2))
+
+    n_boot <- nrow(transformed_boot_dat)
+    # preconstruct M matrix for the bootstrap data
+    M_static <- matrix(NA, nrow = n_boot, ncol = length(theta))
+    pos_orthant_mask <- (transformed_boot_dat[,1] > 0) & (transformed_boot_dat[,2] > 0)
+
+    # handle cases of theta = 0, pi/2 separately
+    ind_0 <- which(theta == 0)
+    if (length(ind_0) > 0) {
+        M_static[, ind_0] <- transformed_boot_dat[,1] * pos_orthant_mask
+    }
+    ind_90 <- which(theta == pi/2)
+    if (length(ind_90) > 0) {
+        M_static[, ind_90] <- transformed_boot_dat[,2] * pos_orthant_mask
+    }
+    # handle all other angles now
+    inds_no_ax <- which(!(theta == 0 | theta == pi/2))
+    if (length(inds_no_ax) > 0) {
+        angles_no_ax <- theta[inds_no_ax]
+        inv_cos <- 1/cos(angles_no_ax)
+        inv_sin <- 1/sin(angles_no_ax)
+        
+        proj_x <- transformed_boot_dat[,1] %o% inv_cos
+        proj_y <- transformed_boot_dat[,2] %o% inv_sin
+        M_static[, inds_no_ax] <- pmin(proj_x, proj_y)
+    }
+
+    # for each point (row), is it strictly northeast of each point on isoline (column)
+    match_x <- outer(transformed_boot_dat[,1], ext_isoline[,1], '>')
+    match_y <- outer(transformed_boot_dat[,2], ext_isoline[,2], '>')
+    hit_static <- (match_x & match_y)*1
+
+    qn <- (n_boot)^(-gamma)
+    
+    if (verbose) pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
+    for (k in 1:B) {
+        idx <- sample.int(n_boot, n_boot, replace=TRUE)
+        # sample rows of M_boot and hit_boot in lieu of the actual data
+        M_boot <- M_static[idx, , drop=FALSE]
+        hit_boot <- hit_static[idx, , drop=FALSE]
+        # fraction of strict exceedances over each point on isoline
+        emp_probs <- colMeans(hit_boot)
+        # radii for which 1-qn strict exceedances for each ray on isoline
+        rq <- colQuantiles(M_boot, probs=1-qn, type=1, drop=TRUE)
+        tail_probs <- (rq/rp)*qn
+        final_probs <- ifelse(emp_probs >= qn, emp_probs, tail_probs)
+        boot_draws[k] <- max(abs(final_probs - p))
+        if (verbose) utils::setTxtProgressBar(pb, k)
+    }
+    if (verbose) close(pb)
+
+    c_estimates <- list()
+    for (i in 1:length(alphas)) {
+        alpha <- alphas[i]
+        c_estimate <- as.numeric(quantile(boot_draws, probs = 1-alpha))
+        c_estimates[as.character(alpha)] <- c_estimate
+    }
+
+    # store the vectorized survival function computed on your dataset
+    # to be used to easily compute coverage of a desired isoline
+    survFunc <- function(pts) {
+        survProb <- vectorizedBlendedSurv(pts, transformed_iso_dat, gamma, xi)
+        return(survProb)
+    }
+
+    res_lst <- list()
+    res_lst$full_dat <- group_assignments
+    res_lst$c_estimates <- c_estimates
+    res_lst$p <- p
+    res_lst$gamma <- gamma
+    res_lst$xi <- xi
+    res_lst$survFunc <- survFunc
+    res_lst$transform_func1 <- function(pts) transform(pts, trans_dat[,1])
+    res_lst$transform_func2 <- function(pts) transform(pts, trans_dat[,2])
+    res_lst$inv_transform_func1 <- function(pts) inv_transform(pts, trans_dat[,1])
+    res_lst$inv_transform_func2 <- function(pts) inv_transform(pts, trans_dat[,2])
+
+    return(res_lst)
+
+}
+
+computeExtremeRegionPretransformGPD <- function(dat, alphas, p, B, gamma, verbose=FALSE) {
+    # Function to compute an extremal confidence region, but as opposed to the method above,
+    # we input the data on it's original scale, perform the marginal transformation in here,
+    # and then re-fit the marginals within the bootstrap. The idea is that we are not accounting
+    # for the variability in fitting the marginals in the above function when determining c, so
+    # we will refit the marginals in each iteration of the bootstrap loop to account for this variability.
+    # 
+    # Arguments:
+    # dat: the data, in the form of a 2-column R data.frame
+    # alphas: a vector of alphas indicating desired probability of miscoverage
+    # (0.01 for 99% CI, 0.05 for 95% CI, etc.). NOTE: even if only one alpha desired, must put it in a vector.
+    # p: the desired p-isoline you wish to capture
+    # B: the number of bootstrap replicates in determining c_hat
+    # gamma: 1/n^(gamma), controls the smallest probability to use empirical df
+    # verbose: print bootstrap loop progress bar and checkpoint messages
+
+    # the transform: inverse probability transform, with CDF estimated via ecdf + GPD beyond n^-gamma quantile
+    transform <- function(pts, marginal_dat) {
+        transformed_pts <- 1/(1-est_cdf(pts, marginal_dat, gamma)) - 1
+        return(transformed_pts)
+    }
+
+    # the inverse transform: not explicitly used in the following computations, but useful for
+    # drawing on the original scale
+    inv_transform <- function(pts, marginal_dat) {
+        orig_pts <- est_inv_cdf(pts/(1+pts), dat=marginal_dat, gamma=gamma)
+        return(orig_pts)
+    }
+    
+    transformed_dat <- data.frame(X1=transform(dat[,1], dat[,1]), X2=transform(dat[,2], dat[,2]))
+    n_dat <- nrow(transformed_dat)
+    
+    ext_isoline <- drawExtremeIsoline(transformed_dat, p, n_coords=200, grid_lbs=c(0,0), gamma=gamma, xi=1)
+    boot_draws <- rep(NA, B)
+
+    # bootstrap loop
+    if (verbose) pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
+    for (k in 1:B) {
+        idx <- sample.int(n_dat, n_dat, replace=TRUE)
+        
+        boot_dat <- dat[idx,]
+        # transform bootstrapped dataset
+        boot_dat_transformed <- data.frame(X1=transform(boot_dat[,1], boot_dat[,1]), 
+                                           X2=transform(boot_dat[,2], boot_dat[,2]))
+        # compute the survival function using the transformed dataset, on your isoline of interest
+        final_probs <- vectorizedBlendedSurv(pts=ext_isoline, dat=boot_dat_transformed, gamma=gamma, xi=1)
+        boot_draws[k] <- max(abs(final_probs - p))
+        if (verbose) utils::setTxtProgressBar(pb, k)
+    }
+    if (verbose) close(pb)
+
+    c_estimates <- list()
+    for (i in 1:length(alphas)) {
+        alpha <- alphas[i]       
+        c_estimate <- as.numeric(quantile(boot_draws, probs = 1-alpha))
+        c_estimates[as.character(alpha)] <- c_estimate
+    }
+
+    # store the vectorized survival function computed on your dataset
+    # to be used to easily compute coverage of a desired isoline
+    survFunc <- function(pts) {
+        survProb <- vectorizedBlendedSurv(pts, transformed_dat, gamma=gamma, xi=1)
+        return(survProb)
+    }
+
+    res_lst <- list()
+    res_lst$dat <- dat
+    res_lst$trans_dat <- transformed_dat
+    res_lst$c_estimates <- c_estimates
+    res_lst$p <- p
+    res_lst$gamma <- gamma
+    res_lst$xi <- 1
+    res_lst$survFunc <- survFunc
+    res_lst$transform_func1 <- function(pts) transform(pts, dat[,1])
+    res_lst$transform_func2 <- function(pts) transform(pts, dat[,2])
+    res_lst$inv_transform_func1 <- function(pts) inv_transform(pts, dat[,1])
+    res_lst$inv_transform_func2 <- function(pts) inv_transform(pts, dat[,2])
+
+    return(res_lst)
+
+}
+
+computeExtremeRegionPretransform <- function(dat, alphas, p, B, gamma, verbose=FALSE) {
+    
+    n_dat <- nrow(dat)
+    
+    transform_gpd <- function(pts, marginal_dat) {
+        probs <- est_cdf(pts, marginal_dat, gamma)
+        transformed_pts <- (1 / (1 - probs)) - 1
+        return(transformed_pts)
+    }
+
+    inv_transform_gpd <- function(pts, marginal_dat) {
+        u_pts <- pts / (pts + 1)
+        orig_pts <- est_inv_cdf(u_pts, dat=marginal_dat, gamma=gamma)
+        return(orig_pts)
+    }
+
+    # draw the best estimate of the isoline using the hybrid ecdf/gpd transform
+    transformed_dat <- data.frame(X1=transform_gpd(dat[,1], dat[,1]), 
+                                  X2=transform_gpd(dat[,2], dat[,2]))
+    ext_isoline <- drawExtremeIsoline(transformed_dat, p, n_coords=200, 
+                                      grid_lbs=c(0,0), gamma=gamma, xi=1)
+    
+    boot_draws <- rep(NA, B)
+
+    if (verbose) pb <- utils::txtProgressBar(min=0, max=B, style=3)    
+    for (k in 1:B) {
+        idx <- sample.int(n_dat, n_dat, replace=TRUE)
+        boot_dat <- dat[idx,]   
+        
+        u1 <- rank(boot_dat[,1], ties.method = "average")/(n_dat+1)
+        u2 <- rank(boot_dat[,2], ties.method = "average")/(n_dat+1)
+    
+        boot_dat_transformed <- cbind(
+            (1/(1-u1))-1, 
+            (1/(1-u2))-1
+        )
+
+        final_probs <- vectorizedBlendedSurv(pts=ext_isoline, 
+                                             dat=boot_dat_transformed, 
+                                             gamma=gamma, 
+                                             xi=1)
+        
+        boot_draws[k] <- max(abs(final_probs - p))
+        
+        if (verbose) utils::setTxtProgressBar(pb, k)
+    }
+    if (verbose) close(pb)
+
+    c_estimates <- list()
+    for (i in 1:length(alphas)) {
+        alpha <- alphas[i]        
+        c_estimate <- as.numeric(quantile(boot_draws, probs = 1-alpha))
+        c_estimates[as.character(alpha)] <- c_estimate
+    }
+
+    # store the survival function for later usage (evaluating coverage of a known isoline, etc.)
+    survFunc <- function(pts) {
+        survProb <- vectorizedBlendedSurv(pts, transformed_dat, gamma=gamma, xi=1)
+        return(survProb)
+    }
+
+    res_lst <- list()
+    res_lst$dat <- dat
+    res_lst$trans_dat <- transformed_dat
+    res_lst$c_estimates <- c_estimates
+    res_lst$p <- p
+    res_lst$gamma <- gamma
+    res_lst$xi <- 1
+    res_lst$survFunc <- survFunc
+    
+    # save the transforms, to be used to evaluate coverage of isolines + plot bounds of tubes
+    res_lst$transform_func1 <- function(pts) transform_gpd(pts, dat[,1])
+    res_lst$transform_func2 <- function(pts) transform_gpd(pts, dat[,2])
+    res_lst$inv_transform_func1 <- function(pts) inv_transform_gpd(pts, dat[,1])
+    res_lst$inv_transform_func2 <- function(pts) inv_transform_gpd(pts, dat[,2])
+
+    return(res_lst)
 }
 
 computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
@@ -106,7 +703,7 @@ computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
         pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
         for (k in 1:B) {
             boot_dat <- dat %>% sample_frac(1, replace = TRUE)
-            boot_survfunc <- computeEmpSurvIrregular(emp_isoline, boot_dat)
+            boot_survfunc <- vectorizedEmpSurv(emp_isoline, boot_dat)
             boot_draws[k] <- max(abs(boot_survfunc-p))
             utils::setTxtProgressBar(pb, k)
         }
@@ -114,7 +711,7 @@ computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
     } else {
        for (k in 1:B) {
             boot_dat <- dat %>% sample_frac(1, replace = TRUE)
-            boot_survfunc <- computeEmpSurvIrregular(emp_isoline, boot_dat)
+            boot_survfunc <- vectorizedEmpSurv(emp_isoline, boot_dat)
             boot_draws[k] <- max(abs(boot_survfunc-p))
         }
     }
@@ -125,8 +722,8 @@ computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
         c_estimates[as.character(alpha)] <- c_estimate
     }
 
-    survFunc <- function(x) {
-        survProb <- mean((dat[,1] > x[1]) & (dat[,2] > x[2]))
+    survFunc <- function(pts) {
+        survProb <- vectorizedEmpSurv(pts, dat)
         return(survProb)
     }
 

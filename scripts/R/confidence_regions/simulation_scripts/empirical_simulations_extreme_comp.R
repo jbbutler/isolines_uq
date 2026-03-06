@@ -1,5 +1,9 @@
 # Script to evaluate the coverage properties of the confidence tube method using the empirical survival function,
-# by simulating data from known distributions with different distributional characteristics.
+# by simulating data from known distributions with different distributional characteristics. Specifically,
+# I'm trying to compare with results from the 3-way extremal sample splitting procedure. Splitting the sample
+# into thirds for the extremal case reduces the effective sample size to construct a tube for an extreme isoline.
+# I'm wondering if we split the data too much and reduce the sample size enough where the empirical distribution
+# becomes competitive again..
 #
 # Jimmy Butler
 # February 2025
@@ -37,19 +41,10 @@ if (is.null(args$save_full_path) && is.null(args$save_df_path)) {
 }
 
 # simulation parameters
-ns <- c(1000, 5000, 10000, 50000, 100000) # sample sizes to test
+ns <- 3*c(1000, 5000, 10000, 50000) # sample sizes to test
 alphas <- c(0.05, 0.1, 0.01) # alphas for 1-alpha tubes
-C <- 5
+C <- 15
 p_funcs <- list()
-# add in central functions
-p_funcs[['central']] <- list()
-p_funcs[['central']][['0.05']] <- function(n) 0.05
-# add in intermediate functions
-p_funcs[['intermediate']] <- list()
-p_funcs[['intermediate']][['1_3']] <- function(n) n^(-1/3)
-p_funcs[['intermediate']][['1_2']] <- function(n) n^(-1/2)
-p_funcs[['intermediate']][['2_3']] <- function(n) n^(-2/3)
-p_funcs[['extremal']] <- list()
 # add in extremal functions
 p_funcs[['extremal']][[as.character(C)]] <- function(n) C/n
 
@@ -157,7 +152,7 @@ for (i in 1:length(dists)) {
                     )
                   }))
           
-                  save_fname <- paste0(args$save_df_path, 'empirical_coverage.csv')
+                  save_fname <- paste0(args$save_df_path, 'empirical_coverage_extremal_comparison.csv')
                   file_exists <- file.exists(save_fname)
           
                   write.table(coverage_df, 

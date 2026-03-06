@@ -15,15 +15,15 @@ set.seed(12345)
 
 source('~/isolines_uq/scripts/R/confidence_regions/modules/utils.R')
 
-dist <- 'bivt_copula_df4_marginals_df4'
+dist <- 'bivt_copula_df1_marginals_df1'
 
 # defining sampling, survival functions to make our lives easier later..
 rdist <- function(n) {
-    dat <- data.frame(rmvt(n=n, sigma=matrix(c(1, 0.7, 0.7, 1), nrow=2), df=4))
+    dat <- data.frame(rmvt(n=n, sigma=matrix(c(1, 0.7, 0.7, 1), nrow=2), df=1))
     return(dat)
 }
 pdist <- function(point) {
-    prob <- pmvt(lower=point, upper=Inf, df=4, sigma=matrix(c(1, 0.7, 0.7, 1), nrow = 2))
+    prob <- pmvt(lower=point, upper=Inf, df=1, sigma=matrix(c(1, 0.7, 0.7, 1), nrow = 2))
     return(prob)
 }
 
