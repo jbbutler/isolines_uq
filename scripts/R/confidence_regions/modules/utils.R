@@ -187,7 +187,10 @@ drawEmpiricalIsoline <- function(dat, n_coords, grid_lbs, p) {
     # recenter data coordinate system for polar transformation
     dat_shifted <- sweep(dat, 2, grid_lbs, "-")
 
-    angles <- seq(0, pi/2, length.out=n_coords)
+    # choose angles non uniformly spaced in theta to account for different axis scales
+    x_seq <- seq(max(dat_shifted[,1]), 0, length.out=n_coords)
+    y_seq <- seq(0, max(dat_shifted[,2]), length.out=n_coords)
+    angles <- atan2(y_seq, x_seq)
     # handle angles between 0 and pi/2 exclusive
     angles_no_ax <- angles[2:(n_coords-1)]
     inv_cos <- 1/cos(angles_no_ax)
