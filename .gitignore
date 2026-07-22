@@ -2,5 +2,5 @@
 *.swp
 /scripts/bash/logs/
 /notebooks/scratch.ipynb
-outputs/
-data/
+#outputs/
+#data/
