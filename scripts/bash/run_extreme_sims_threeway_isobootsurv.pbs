@@ -21,7 +21,7 @@ module load R
 conda activate isolinesR
 export OMP_NUM_THREADS=1
 
-FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal_threeway_split/iso_boot_surv/gamma_0.67/C_5/"
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal_threeway_split/iso_boot_surv/gamma_0.67/C_15/twoC/"
 DF_SAVE_PATH="~/isolines_uq/outputs/simulations/"
 
 Rscript extremal_simulations_threeway_iso_boot_surv.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

@@ -1,0 +1,30 @@
+#!/bin/bash -l
+
+#SBATCH -A dasrepo
+#SBATCH --job-name=extreme_coverage_probability_bias_log_2.2.3
+#SBATCH --time=06:00:00
+#SBATCH --nodes=1
+#SBATCH --output=./logs/extreme_coverage_probability_bias_2.2.3%j.out
+#SBATCH --error=./logs/extreme_coverage_probability_bias_2.2.3log%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=64
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+
+cd ..
+cd R
+cd confidence_regions
+cd simulation_scripts
+cd explorations
+cd bias_corrections
+cd bootstrap_probability_bias
+module load R
+conda activate isolinesR
+export OMP_NUM_THREADS=1
+
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal_logprobability_bias_correction/exp2.2.3/gamma1_0.5_gamma2_0.67/"
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/bias_correction/"
+
+Rscript probability_bias_blowup_coverage_exp2.2.3.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

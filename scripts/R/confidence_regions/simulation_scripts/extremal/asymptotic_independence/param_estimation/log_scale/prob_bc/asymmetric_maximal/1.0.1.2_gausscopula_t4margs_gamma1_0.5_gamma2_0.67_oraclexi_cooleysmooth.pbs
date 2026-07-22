@@ -1,0 +1,23 @@
+#!/bin/bash -l
+
+#SBATCH -A dasrepo
+#SBATCH --job-name=1.0.1.2_gausscopula_t4margs_gamma1_0.5_gamma2_0.67_oraclexi_cooleysmooth
+#SBATCH --time=05:00:00
+#SBATCH --nodes=1
+#SBATCH --output=1.0.1.2_gausscopula_t4margs_gamma1_0.5_gamma2_0.67_oraclexi_cooleysmooth%j.out
+#SBATCH --error=1.0.1.2_gausscopula_t4margs_gamma1_0.5_gamma2_0.67_oraclexi_cooleysmooth%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=64
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+
+module load R
+conda activate isolinesR
+export OMP_NUM_THREADS=1
+
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal/1.0.1.2_gausscopula_t4margs_gamma1_0.5_gamma2_0.67_oraclexi_cooleysmooth/"
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/extremal/"
+
+Rscript 1.0.1.2_gausscopula_t4margs_gamma1_0.5_gamma2_0.67_oraclexi_cooleysmooth.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

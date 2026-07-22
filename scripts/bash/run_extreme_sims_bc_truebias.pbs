@@ -1,0 +1,29 @@
+#!/bin/bash -l
+
+#SBATCH -A dasrepo
+#SBATCH --job-name=extreme_coverage_bc_true_bias
+#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --output=./logs/extreme_coverage_bc_true_bias%j.out
+#SBATCH --error=./logs/extreme_coverage_bc_true_bias%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=64
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+
+cd ..
+cd R
+cd confidence_regions
+cd simulation_scripts
+cd explorations
+cd bias_corrections
+module load R
+conda activate isolinesR
+export OMP_NUM_THREADS=1
+
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal_bias_correction/strategy1/gamma0.67/"
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/bias_correction/"
+
+Rscript oracleregion_asymmetric_strategy1.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

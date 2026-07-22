@@ -1,0 +1,29 @@
+#!/bin/bash -l
+
+#SBATCH -A dasrepo
+#SBATCH --job-name=extreme_coverage_nobc
+#SBATCH --time=03:00:00
+#SBATCH --nodes=1
+#SBATCH --output=./logs/extreme_coverage_nobc%j.out
+#SBATCH --error=./logs/extreme_coverage_nobc%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=64
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+
+cd ..
+cd R
+cd confidence_regions
+cd simulation_scripts
+cd explorations
+cd bias_corrections
+module load R
+conda activate isolinesR
+export OMP_NUM_THREADS=1
+
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal/asymmetric/no_bc/gamma0.5/no_trans/"
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/bias_correction/"
+
+Rscript knownindex_nobc_asymmetric_strategy1.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

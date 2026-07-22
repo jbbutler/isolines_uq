@@ -1,0 +1,29 @@
+#!/bin/bash -l
+
+#SBATCH -A dasrepo
+#SBATCH --job-name=extreme_somvr_bc_1
+#SBATCH --time=01:30:00
+#SBATCH --nodes=1
+#SBATCH --output=./logs/extreme_somrv_bc_1%j.out
+#SBATCH --error=./logs/extreme_somrv_bc_1%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=1
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+
+cd ..
+cd R
+cd confidence_regions
+cd simulation_scripts
+cd explorations
+cd bias_corrections
+cd bootstrap_radial_bias
+module load R
+conda activate isolinesR
+export OMP_NUM_THREADS=1
+
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/bias_correction/"
+
+Rscript oracle_somrv_radial_bias.R --save_df_path "$DF_SAVE_PATH"

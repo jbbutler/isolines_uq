@@ -1,0 +1,23 @@
+#!/bin/bash -l
+
+#SBATCH -A dasrepo
+#SBATCH --job-name=0.1.1.2_bivt4_gamma1_0.5_gamma2_0.67_bootmargs
+#SBATCH --time=15:00:00
+#SBATCH --nodes=1
+#SBATCH --output=0.1.1.2_bivt4_gamma1_0.5_gamma2_0.67_bootmargs%j.out
+#SBATCH --error=0.1.1.2_bivt4_gamma1_0.5_gamma2_0.67_bootmargs%j.err
+#SBATCH --exclusive
+#SBATCH -q regular
+#SBATCH --ntasks-per-node=64
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=butlerj@berkeley.edu
+#SBATCH --constraint=cpu
+
+module load R
+conda activate isolinesR
+export OMP_NUM_THREADS=1
+
+FULL_SAVE_PATH="/pscratch/sd/j/jbbutler/isolines/simulations/extremal/0.1.1.2_bivt4_gamma1_0.5_gamma2_0.67_bootmargs/"
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/extremal/"
+
+Rscript 0.1.1.2_bivt4_gamma1_0.5_gamma2_0.67_bootmargs.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 64

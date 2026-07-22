@@ -75,3 +75,24 @@ pKarachiBetaKDE <- function(point, dat=karachiDat, b=b_CONST, lbs=LBS_CONST, ubs
     return(mean(margXs*margYs))
 
 }
+
+pKarachiBetaKDEmargX <- function(x, dat=karachiDat, b=b_CONST, lbs=LBS_CONST, ubs=UBS_CONST) {
+    # Marginal survival of the temperature (X1) coordinate: P(X1 > x).
+    # Marginal of a mixture = mixture of the per-kernel marginals.
+    dat <- data.frame(X=(dat[,1]-lbs[1])/(ubs[1]-lbs[1]),
+                      Y=(dat[,2]-lbs[2])/(ubs[2]-lbs[2]))
+    shape1sX <- dat[,1]/b + 1
+    shape2sX <- (1-dat[,1])/b + 1
+    x01 <- (x - lbs[1])/(ubs[1]-lbs[1])
+    vapply(x01, function(u) mean(1 - pbeta(u, shape1=shape1sX, shape2=shape2sX)), numeric(1))
+}
+
+pKarachiBetaKDEmargY <- function(y, dat=karachiDat, b=b_CONST, lbs=LBS_CONST, ubs=UBS_CONST) {
+    # Marginal survival of the relative-humidity (X2) coordinate: P(X2 > y).
+    dat <- data.frame(X=(dat[,1]-lbs[1])/(ubs[1]-lbs[1]),
+                      Y=(dat[,2]-lbs[2])/(ubs[2]-lbs[2]))
+    shape1sY <- dat[,2]/b + 1
+    shape2sY <- (1-dat[,2])/b + 1
+    y01 <- (y - lbs[2])/(ubs[2]-lbs[2])
+    vapply(y01, function(u) mean(1 - pbeta(u, shape1=shape1sY, shape2=shape2sY)), numeric(1))
+}

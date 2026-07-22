@@ -8,6 +8,187 @@ library(matrixStats)
 
 source('~/isolines_uq/scripts/R/confidence_regions/modules/karachiTools.R')
 
+# Fraga Alves, Gomes & de Haan (2003) estimator of the second-order parameter rho.
+# Works on the LOG-EXCESSES V_{ik} = log(X_{n-i+1:n}) - log(X_{n-k:n}), i=1..k.
+# 
+# tau is the tuning parameter: tau = 0 is the standard choice for |rho| <= 1
+# (which covers your bivariate-t case). For |rho| > 1, use tau = 1.
+estimate_rho_FAGH <- function(radii, gamma_rho = 0.001, tau = 0) {
+    n <- length(radii)
+    k <- min(n-1, floor(2*n/(log(log(n)))))
+    
+    sorted_radii <- sort(radii)
+    # log-excesses over threshold X_{n-k:n}: V_i = log X_{n-i+1:n} - log X_{n-k:n}
+    log_top <- log(sorted_radii[(n - k + 1):n])     # k largest log-values
+    log_threshold <- log(sorted_radii[n - k])       # threshold
+    V <- log_top - log_threshold                     # log-excesses
+    
+    # Moments of the log-excesses
+    M1 <- mean(V)
+    M2 <- mean(V^2)
+    M3 <- mean(V^3)
+    
+    # T statistic (tau = 0 vs tau > 0 cases)
+    if (tau == 0) {
+        T_num <- log(M1) - 0.5 * log(M2 / 2)
+        T_den <- 0.5 * log(M2 / 2) - (1/3) * log(M3 / 6)
+    } else {
+        T_num <- (M1)^tau - (M2 / 2)^(tau / 2)
+        T_den <- (M2 / 2)^(tau / 2) - (M3 / 6)^(tau / 3)
+    }
+    
+    T_stat <- T_num / T_den
+    
+    # Invert to get rho. The closed-form is rho = -|3(T-1)/(T-3)|;
+    # the abs and negation enforce rho <= 0 which is the valid range.
+    rho_hat <- -abs(3 * (T_stat - 1) / (T_stat - 3))
+    
+    return(rho_hat)
+}
+
+
+# Gomes-Martins (2002) estimator of the "scale" second-order parameter beta,
+# given rho_hat. Estimated at the same high level k1 = floor(n^(1 - gamma_rho)).
+estimate_beta_GM <- function(radii, rho_hat, gamma_rho = 0.001) {
+    n <- length(radii)
+    k <- min(n-1, floor(2*n/(log(log(n)))))
+    
+    sorted_radii <- sort(radii)
+    log_top <- log(sorted_radii[(n - k + 1):n])
+    log_threshold <- log(sorted_radii[n - k])
+    V <- log_top - log_threshold     # log-excesses
+    
+    i_seq <- 1:k
+    w_rho  <- (i_seq / k)^(-rho_hat)
+    w_2rho <- (i_seq / k)^(-2 * rho_hat)
+    
+    d_k       <- mean(w_rho)
+    D_k_0     <- mean(V)
+    D_k_rho   <- mean(w_rho * V)
+    D_k_2rho  <- mean(w_2rho)
+    
+    numerator   <- (k / n)^rho_hat * (d_k * D_k_0 - D_k_rho)
+    denominator <- d_k * D_k_rho - D_k_0 * D_k_2rho
+    
+    beta_hat <- numerator / denominator
+    return(beta_hat)
+}
+
+
+# Caeiro-Gomes-Pestana (2005) Corrected Hill (CH) estimator.
+# xi_hat_CH = xi_hat_Hill * (1 - (beta_hat / (1 - rho_hat)) * (n/k)^rho_hat)
+# 
+# By default, beta and rho are estimated externally at a higher level
+# (gamma_rho = 0.001 -> k1 ~ n) and treated as fixed inputs. You can also
+# pass in pre-computed rho_hat / beta_hat (e.g. fixed at -1) to avoid the
+# noise from FAGH or to do sensitivity analysis.
+estimate_xi_CH <- function(radii, gamma, gamma_rho = 0.001,
+                           rho_hat = NULL, beta_hat = NULL, tau = 0) {
+    n <- length(radii)
+    k <- floor(n^(1 - gamma))
+    
+    # Plain Hill at level k
+    xi_hill <- estimate_xi_hill(radii, gamma)
+    
+    # External estimation of (rho, beta) at level k1 if not supplied
+    if (is.null(rho_hat)) {
+        rho_hat <- estimate_rho_FAGH(radii, gamma_rho = gamma_rho, tau = tau)
+    }
+    if (is.null(beta_hat)) {
+        beta_hat <- estimate_beta_GM(radii, rho_hat = rho_hat, 
+                                     gamma_rho = gamma_rho)
+    }
+    
+    # CH correction
+    correction <- 1 - (beta_hat / (1 - rho_hat)) * (n / k)^rho_hat
+    xi_ch <- xi_hill * correction
+
+    res_lst <- list()
+    res_lst$xi_ch <- xi_ch
+    res_lst$xi_hill <- xi_hill
+    
+    return(res_lst)
+}
+
+estimate_xi_hill <- function(radii, gamma) {
+    n <- length(radii)
+    
+    k <- floor(n^(1 - gamma))
+    sorted_radii <- sort(radii)
+    threshold_val <- sorted_radii[n - k]
+    top_k_values <- sorted_radii[(n - k + 1):n]
+
+    xi_hat <- mean(log(top_k_values) - log(threshold_val))
+    
+    return(xi_hat)
+}
+
+addCIs <- function(alpha, res) {
+    #res is a dataframe that has the number of successful covers as one of its columns
+    #Uses Clopper-Pearson to construct confidence intervals
+
+    confint_lb <- qbeta(alpha/2, res$num_covered, 500 - res$num_covered + 1)
+    confint_ub <- qbeta(1-(alpha/2), res$num_covered + 1, 500 - res$num_covered)
+
+    res$confint_lb <- round(confint_lb,3)
+    res$confint_ub <- round(confint_ub,3)
+
+    return(res)
+}
+
+estimate_bias_bounds <- function(dat, gamma1, gamma2, p_target, xi, lbs=c(0,0)) {
+    # Function to estimate conservative bias bounds b1 and b2 for a confidence tube 
+    # using a 3-gamma hold-out projection framework.
+    #
+    # Arguments:
+    # dat: the original data, in the form of a 2-column R data.frame
+    # gamma1: the shallower threshold used to fit the baseline MRV model
+    # gamma2: the deeper test threshold used to evaluate the projection error
+    # p_target: your final extreme target probability (e.g., 5/n)
+    # xi: extreme value index
+    # lbs: lower bounds of the grid
+    #
+    # Output:
+    # A list containing the absolute bounds (b1, b2), the relative bounds (r1, r2), 
+    # and the test probability (p2).
+
+    if (gamma1 <= gamma2) stop('gamma1 must be strictly greater than gamma2')
+
+    n_dat <- nrow(dat)
+    p2 <- n_dat^(-gamma2)
+
+    # get the MRV-estimated isoline for the test probability p2, anchored at gamma1
+    iso_p2 <- drawExtremeIsoline(dat, p = p2, n_coords = 200, grid_lbs = lbs, gamma = gamma1, xi = xi)
+
+    # evaluate the purely empirical survival function along this generated isoline
+    match_x <- outer(dat[,1], iso_p2[,1], '>')
+    match_y <- outer(dat[,2], iso_p2[,2], '>')
+    hit_matrix <- (match_x & match_y) * 1
+    
+    # the empirical survival probability for each point on the isoline
+    emp_surv_p2 <- colMeans(hit_matrix)
+
+    # calculate the relative bias bounds at the test level p2
+    rel_errors <- (emp_surv_p2 - p2) / p2
+    r1 <- min(rel_errors)
+    r2 <- max(rel_errors)
+
+    # scale the relative bounds to the final extreme target probability
+    b1 <- r1 * p_target
+    b2 <- r2 * p_target
+
+    # rxeturn the bounds alongside the intermediate metrics for diagnostics
+    res_lst <- list(
+        b1 = b1, 
+        b2 = b2, 
+        r1 = r1, 
+        r2 = r2, 
+        p2 = p2
+    )
+    
+    return(res_lst)
+}
+
 est_cdf <- function(x, dat, gamma, method = "ecdf") {
     # Function to estimate a univariate CDF, with more standard central statistics
     # methods for non-extreme probabilities, and extremal methods for extreme
@@ -91,22 +272,15 @@ blendedSurvivalFunc <- function(pt, dat, gamma, xi) {
     }
 }
 
-# function to load up the different distributions (sampling functions)
 loadSamplingFunction <- function(dist) {
-    
-    if (dist=='bivt') {
-        samplingFunction <- function(n) return(data.frame(rmvt(n, sigma = matrix(c(1, 0.7, 0.7, 1), nrow = 2), df = 4)))
+    if (dist == 'bivt') {
+        return(function(n) data.frame(rmvt(n, sigma = matrix(c(1, 0.7, 0.7, 1), nrow = 2), df = 4)))
+    } else if (dist == 'bivgauss') {
+        return(function(n) data.frame(rmvnorm(n, mean = rep(0, 2), sigma = matrix(c(1, 0.7, 0.7, 1), nrow = 2))))
+    } else if (dist == 'karachi') {
+        return(function(n) rKarachiBetaKDE(n))
     }
-    if (dist=='bivgauss') {
-        samplingFunction <- function(n) return(data.frame(rmvnorm(n, mean = rep(0, 2), sigma = matrix(c(1, 0.7, 0.7, 1), nrow = 2))))
-    }
-    if (dist=='karachi') {
-        samplingFunction <- function(n) return(rKarachiBetaKDE(n))
-    }
-
-    return(samplingFunction)
 }
-
 # function to to compute the empirical survival function (given observed data) on a region of points which are not
 # a regular grid
 # works by converting all of the points to a regular grid, doing a fast empirical survival function operation
@@ -233,429 +407,21 @@ drawExtremeIsoline <- function(dat, p, n_coords, grid_lbs, gamma, xi) {
     return(p_isoline)
 }
 
-# function that draws a grid of points over which we wish to evaluate the sup difference between
-# the true survival function (in bootstrap world) and the empirical estimate (bootstrap survival function in bootstrap world)
-drawSupRegion <- function(dat, n_boundary_coords, n_interior_coords, gridLbs, gridUbs, p, beta) {
-    
-    # function that we will use our root-finding algorithm for
-    empSurvFixedCoord <- function(radius, angle, prob, xCenter, yCenter) {
-        xCoord <- xCenter + radius*cos(angle)
-        yCoord <- yCenter + radius*sin(angle)
-        exceedanceProb <- mean((dat[,1] > xCoord) & (dat[,2] > yCoord))
-        return(exceedanceProb - prob)
-    }
-    
-    radii <- rep(NA, n_boundary_coords*n_interior_coords)
-    full_angles <- rep(NA, n_boundary_coords*n_interior_coords)
-    angles <- seq(0, pi/2, length.out=n_boundary_coords)
-    maxRad <- sqrt(sum((gridUbs-gridLbs)**2))
-
-    # for each angle in first quadrant, find radius that gives a point with desired exceedance probability
-    # by finding roots of pmvtFixedCoord given the angle
-    # find both the lower and upper radius, and then store a mesh of them
-    for (i in 1:n_boundary_coords) {
-        angle <- angles[i]
-        lower_radius <- uniroot(empSurvFixedCoord, interval=c(0, maxRad), angle=angle,
-                            prob=p+beta, xCenter=gridLbs[1], yCenter=gridLbs[2])$root
-        upper_radius <- uniroot(empSurvFixedCoord, interval=c(0, maxRad), angle=angle,
-                             prob=p-beta, xCenter=gridLbs[1], yCenter=gridLbs[2])$root
-        
-        radii_per_angle <- seq(lower_radius, upper_radius, length.out=n_interior_coords)
-        angles_per_angle <- rep(angle, length.out=n_interior_coords)
-        
-        radii[((i-1)*n_interior_coords + 1):(i*n_interior_coords)] <- radii_per_angle
-        full_angles[((i-1)*n_interior_coords + 1):(i*n_interior_coords)] <- angles_per_angle
-        
-        
-    }
-
-    # convert back to cartesian coordinates
-    X1 <- radii*cos(full_angles) + gridLbs[1]
-    X2 <- radii*sin(full_angles) + gridLbs[2]
-    return(data.frame(cbind(X1, X2)))
-    
-}
-
-# function to evaluate the exact Gaussian KDE at a single grid point
-# credit to Cooley et al. source code
-kernSurv <- function(loc, dat, bw)
-{
-        p1 <- 1 - pnorm(loc[1], mean = dat[,1], sd = bw[1]/4)
-        p2 <- 1 - pnorm(loc[2], mean = dat[,2], sd = bw[2]/4)
-        return(mean(p1*p2))
-}
-
-empSurv <- function(point, dat) {
-    points <- as.numeric(point)
-	val <- mean(dat[,1] > point[1] & dat[,2] > point[2])
-        return(val)
-}
-
-# function to draw a single bounding curve for the uncertainty tube, given a particular sample size and
-# value for bnhat
-# Note that this function exactly draws the tube for, assuming your survival function is the empirical survival function
-drawTubeBoundExact <- function(dat, exceedances, lbs, ubs) {
-    
-    subdat <- dat %>% filter(X1 >= lbs[1], X2 >= lbs[2])
-    y_ordered <- sort(subdat$X2, decreasing=TRUE)
-
-    # maximum number of points in each isoline is:
-    # 1 for the starting point, and 2 for each remaining point in subdat
-    ys <- rep(0, nrow(subdat)*2 + 1)
-    xs <- rep(0, nrow(subdat)*2 + 1)
-
-    ys[1] <- y_ordered[exceedances]
-    xs[1] <- lbs[1]
-
-    # use for faster lookups/boolean indexing
-    arranged_xs <- as.data.table(subdat %>% arrange(X1))
-    arranged_ys <- as.data.table(subdat %>% arrange(desc(X2)))
-
-    ys[2] <- ys[1]
-    xs[2] <- as.numeric(arranged_xs[X2 >= ys[1]][1,1])
-
-    end_alg <- nrow(arranged_xs[X1 >= xs[2]]) == exceedances
-
-    # will start adding points to the isoline lists in the third index
-    ind <- 3
-
-    while (!end_alg) {
-        # grab the last point you are stepping down and to the right from
-        last_pt_x <- xs[ind-1]
-        last_pt_y <- ys[ind-1]
-    
-        # y you step down to is highest y among all points down and to the right
-        poss_ys <- arranged_ys[X1 > last_pt_x & X2 < last_pt_y]
-    
-        new_y <- as.numeric(poss_ys[1,2])
-    
-        poss_xs <- arranged_xs[X1 > last_pt_x & X2 >= new_y]
-    
-        new_x <- as.numeric(poss_xs[1,1])
-
-        if (is.na(new_x) | is.na(new_y)) {
-            break
-        }
-
-        xs[ind] <- last_pt_x
-        xs[ind+1] <- new_x
-        ys[ind] <- new_y
-        ys[ind+1] <- new_y
-    
-        ind <- ind + 2
-    
-        end_alg <- nrow(arranged_xs[X1 >= new_x]) == exceedances
-    }
-
-    xs[ind] <- xs[ind-1]
-    ys[ind] <- lbs[2]
-
-    points_x <- xs[1:ind]
-    points_y <- ys[1:ind]
-    
-    # subset to have isoline contained in upper bound of grid
-    curve <- data.frame(X1=points_x, X2=points_y)
-    curve <- curve[curve$X1 <= ubs[1] & curve$X2 <= ubs[2],]
-    
-    return(curve)
-    
-}
-
-# function to draw the bounds of the p-isoline region for certain sample with a certain bnhat
-# Note this draws it exactly, assuming your survival function is the empirical survival function
-drawTubeBoundsExact <- function(dat, bnhat, p, lbs, ubs) {
-
-    n <- nrow(dat)
-    exceedances_top <- ceiling(n*(p-bnhat))
-    exceedances_bottom <- floor(n*(p+bnhat)) + 1
-
-    if (exceedances_top <= 0) {
-	tube_top <- data.frame(X1=c(lbs[1], ubs[1], ubs[1]), 
-			       X2=c(ubs[2], ubs[2], lbs[2]))
-    } else {
-        tube_top <- drawTubeBound(dat, exceedances_top, lbs, ubs)
-    }
-
-    tube_bottom <- drawTubeBound(dat, exceedances_bottom, lbs, ubs)
-    
-    tube_bounds <- list()
-    tube_bounds$top <- tube_top
-    tube_bounds$bottom <- tube_bottom
-    
-    return(tube_bounds)
-    
-}
-
-# function to draw one of the bounding curves of your confidence tube, assuming use of the empirical survival
-# function as your survival function (needed to be handled separately since this function has flat parts)
-# Note: obtains some finite number of points on the curve, so it is approximate but faster than the previous
-# exact methods of drawing the tube bounds!
-drawTubeBoundES <- function(dat, numCoords, gridLbs, exceedances) {
-    
-    subdat <- dat %>% filter(X1 >= gridLbs[1], X2 >= gridLbs[2])    
-    y_ordered <- sort(subdat$X2, decreasing=TRUE)
-    x_ordered <- sort(subdat$X1, decreasing=TRUE)
-    # find largest y and x coordinates of any points on isoline
-    # use these to find upper bound of search window for root-finding algorithm
-    # for good measure, add 1 to make it definitively larger!
-    ymax <- y_ordered[exceedances] + 1
-    xmax <- x_ordered[exceedances] + 1
-    ubs <- c(xmax, ymax)
-    
-    numExceedances <- function(radius, angle, dat, desired_exceedances, xCenter, yCenter) {
-        xCoord <- xCenter + radius*cos(angle)
-        yCoord <- yCenter + radius*sin(angle)
-        actual_exceedances <- sum((dat[,1] > xCoord) & (dat[,2] > yCoord))
-        diff <- actual_exceedances - (desired_exceedances - 0.5)   
-        return(diff)
-    }
-    
-    radii <- rep(NA, numCoords)
-    angles <- seq(0, pi/2, length.out=numCoords)
-    maxRad <- sqrt(sum((ubs - gridLbs)**2))
-    
-    for (i in 1:numCoords) {
-        # note: may need to pay attention to the fact that this is not a continuous function..
-        angle <- angles[i]
-        radii[i] <- uniroot(numExceedances, interval=c(0, maxRad), angle=angle, dat=dat, desired_exceedances=exceedances, xCenter=gridLbs[1], yCenter=gridLbs[2])$root
-        
-    }
-    
-    xs <- radii*cos(angles) + gridLbs[1]
-    ys <- radii*sin(angles) + gridLbs[2]
-    
-    tube <- data.frame(xs, ys)
-    colnames(tube) <- c('X1', 'X2')
-    return(tube)
-    
-}
-
-# Function that draws both of the tube bounds for the confidence tubes approximately, using
-# the empirical survival function as the function estimate
-drawTubeBoundsES <- function(dat, numCoords, bnhat, p, gridLbs, gridUbs) {
-
-    n <- nrow(dat)
-    exceedances_top <- ceiling(n*(p-bnhat))
-    exceedances_bottom <- floor(n*(p+bnhat)) + 1
-
-    if (exceedances_top <= 0) {
-        tube_top <- data.frame(X1=c(gridLbs[1], gridUbs[1], gridUbs[1]),
-                               X2=c(gridUbs[2], gridUbs[2], gridLbs[2]))
-    } else {
-        tube_top <- drawTubeBoundES(dat, numCoords, gridLbs, exceedances_top)
-    }
-
-    tube_bottom <- drawTubeBoundES(dat, numCoords, gridLbs, exceedances_bottom)
-
-    tube_bounds <- list()
-    tube_bounds$top <- tube_top
-    tube_bounds$bottom <- tube_bottom
-
-    return(tube_bounds)
-
-}
-
-
-    
-fastEmpSurv <- function(grid, dat) {
-  # Note: code is adapted from the mltools package source code
-
-  dat <- data.table(dat)
-  # flip the grid points around
-  grid <- data.table(grid[nrow(grid):1,])
-  
-  dat_copy <- copy(dat[, names(grid), with=FALSE])
-  uboundDT <- unique(data.table(grid[['X1']], grid[['X1']]))
-  setnames(uboundDT, c('X1', paste0("Bound.X1")))
-  dat_copy <- uboundDT[dat_copy, on='X1', roll=Inf, nomatch=0]
-  uboundDT <- unique(data.table(grid[['X2']], grid[['X2']]))
-  setnames(uboundDT, c('X2', paste0("Bound.X2")))
-  dat_copy <- uboundDT[dat_copy, on='X2', roll=Inf, nomatch=0]
-  
-  binned.uniques <- dat_copy[, .N, keyby=eval(paste0("Bound.", names(grid)))]
-  setnames(binned.uniques, paste0("Bound.", names(grid)), names(grid))
-  grid <- binned.uniques[grid, on=names(grid)]
-  grid[is.na(N), N := 0]
-  
-  grid[, N.cum := cumsum(N), by='X2']
-  grid[, N.cum := cumsum(N.cum), by='X1']
-  grid[, `:=`(N = NULL, Surv = N.cum/nrow(dat))]
-  
-  # reflip survival function vals to be in same order that grid points came in
-  vals <- grid$Surv[nrow(grid):1]
-  return(vals)
-}
-
-gatherNaRes <- function(output_lst, samp_sizes) {
-
-    na_pers <- c()
-    na_bcas <- c()
-    num_na_coords <- c()
-    num_na_jacks <- c()
-
-    for (i in 1:length(output_lst)) {
-
-	na_pers <- c(na_pers, output_lst[[i]]$na_per)
-        na_bcas <- c(na_bcas, output_lst[[i]]$na_bca)
-        num_na_coords <- c(num_na_coords, output_lst[[i]]$num_na_coord)
-	num_na_jacks <- c(num_na_jacks, output_lst[[i]]$num_na_jack)
-
-    }
-
-    na_df <- data.frame(samp_sizes, na_pers, na_bcas, num_na_coords, num_na_jacks)
-
-    colnames(na_df) <- c('n', 'NA Percentile CIs', 'NA BCA CIs', 'NA Coords', 'NA Jackknifes')
-
-    return(na_df)
-}
-
-gatherNaResComparison <- function(output_lst, coords) {
-
-    na_pers <- c()
-    na_bcas <- c()
-    num_na_coords <- c()
-    num_na_jacks <- c()
-
-    for (i in 1:length(output_lst)) {
-
-        na_pers <- c(na_pers, output_lst[[i]]$na_per)
-        na_bcas <- c(na_bcas, output_lst[[i]]$na_bca)
-        num_na_coords <- c(num_na_coords, output_lst[[i]]$num_na_coord)
-        num_na_jacks <- c(num_na_jacks, output_lst[[i]]$num_na_jack)
-
-    }
-
-    na_df <- data.frame(coords, na_pers, na_bcas, num_na_coords, num_na_jacks)
-
-    colnames(na_df) <- c('Coord.', 'NA Percentile CIs', 'NA BCA CIs', 'NA Coords', 'NA Jackknifes')
-
-    return(na_df)
-
-
-}
-
-gatherConfintRes <- function(output_lst, samp_sizes) {
-
-    cvg_pers <- c()
-    avg_pers <- c()
-    cvg_bcas <- c()
-    avg_bcas <- c()
-
-    for (i in 1:length(output_lst)) {
-
-        cvg_pers <- c(cvg_pers, output_lst[[i]]$cvg_per)
-        avg_pers <- c(avg_pers, output_lst[[i]]$avg_per)
-	cvg_bcas <- c(cvg_bcas, output_lst[[i]]$cvg_bca)
-	avg_bcas <- c(avg_bcas, output_lst[[i]]$avg_bca)
-
-    }
-
-    res_df <- data.frame(samp_sizes, cvg_pers, avg_pers, cvg_bcas, avg_bcas)
-
-    colnames(res_df) <- c('n', 'Percentile Coverage', 'Percentile Avg. Width', 'BCA Coverage', 'BCA Avg. Width')
-
-    return(res_df)
-
-}
-
-extractBoundary <- function(region) {
-    # region: dataframe of points corresponding to confidence set, restricted to 1st quadrant
-    
-    colnames(region) <- c('Var1', 'Var2')
-    xvals <- sort(unique(region$Var1), decreasing = FALSE)
-    num_xs <- length(xvals)
-
-    left_line <- filter(region, Var1 == min(region$Var1))
-    right_line <- filter(region, Var1 == max(region$Var1))
-
-    upper_pts <- vector(mode = 'list')
-    lower_pts <- vector(mode = 'list')
-
-    for (i in 2:(num_xs-1)) {
-    
-        x <- xvals[i]
-        next_x <- xvals[i+1]
-        last_x <- xvals[i-1]
-        upper_pts_x <- filter(region, Var1 == x, Var2 >= max(filter(region, Var1 == next_x)$Var2))
-        lower_pts_x <- filter(region, Var1 == x, Var2 <= min(filter(region, Var1 == last_x)$Var2))
-    
-        upper_pts[[i]] <- upper_pts_x
-        lower_pts[[i]] <- lower_pts_x
-    
-    }
-
-    upper_pts[[1]] <- left_line
-    upper_pts[[num_xs]] <- right_line
-
-    boundary <- bind_rows(upper_pts, lower_pts)
-    
-    return(boundary)
-    
-}
-
-extendIsoline <- function(isoline, lb) {
-    # function to extend the sides of a pre-drawn isoline to the edges of a larger grid
-
-    left <- isoline[which.min(isoline$X1),]
-    bottom <- isoline[which.min(isoline$X2),]
-
-    left <- sfg_linestring(rbind(left, c(lb, left$X2)))
-    bottom <- sfg_linestring(rbind(bottom, c(bottom$X1, lb)))
-
-    isoline <- sfg_multilinestring(isoline)
-
-    isoline_aug <- st_union(st_union(left, isoline), bottom)
-
-    return(isoline_aug)
-}
-
-extendRegion <- function(region_pts, polyregion_pts, bds_x1, bds_x2) {
-
-    # extends the projection region to edges of the full grid if the extent of points does not match full grid size
-    # to do: investigate wy the projection region works this way?
-
-
-    mins <- apply(region_pts, 2, min)
-    lefts <- c(min((region_pts %>% filter(X1 == mins[[1]]))$X2), max((region_pts %>% filter(X1 == mins[[1]]))$X2))
-    rights <- c(min((region_pts %>% filter(X2 == mins[[2]]))$X1), max((region_pts %>% filter(X2 == mins[[2]]))$X1))
-    mins <- ceiling(mins*10^(4))/(10^4)
-    left_topoff <- data.frame(X1 = c(rep(bds_x1[1], 2), rep(mins[[1]], 2)), X2 = c(lefts, lefts[2], lefts[1]))
-    right_topoff <- data.frame(X1 = c(rights, rights[2], rights[1]), X2 = c(rep(bds_x2[1], 2), rep(mins[[2]], 2)))
-
-    left_topoff <- sfg_polygon(left_topoff)
-    right_topoff <- sfg_polygon(right_topoff)
-    polyregion_aug <- st_union(st_union(polyregion_pts, left_topoff), right_topoff)
-
-    return(polyregion_aug)
-}
-computeUpperPadding <- function(beta, beta_zero, surv_func, boot_diffs, p, alpha) {
-    
-    # function to compute the padding on the upper bound, for use in `optimize` function
-    # when minimizing with respect to beta
-
-    getZ <- function(beta, surv_func, p, boot_diffs) {
-    deltamask <- abs(-surv_func$estimate + p) <= beta
-    return(max(boot_diffs[deltamask]))
-    }
-    
-    Z0s <- map(boot_diffs, getZ, beta = beta_zero, surv_func = surv_func, p = p)
-    
-    Zbetas <- map_dbl(boot_diffs, getZ, beta = beta, surv_func = surv_func, p = p)
-    bhat <- quantile(Zbetas, prob = 1 - alpha)[[1]]
-    
-    ts <- seq(min(Zbetas), max(Zbetas), length.out = 1000)
-    e <- ecdf(Zbetas)
-
-    lower_bool <- e(ts) <= 1-alpha
-    upper_bool <- e(ts) >= 1-alpha
-
-    bminus <- ts[upper_bool][which.min(e(ts)[upper_bool])]
-    
-    pn0 <- mean(Z0s <= bhat)
-    FZn_bminus <- mean(Zbetas <= bminus)
-    
-    ub_padding <- pn0 - FZn_bminus
-    
-    return(abs(ub_padding))
-    
+# Size of a Mammen-Polonik tube. Assumes that r_inner, r_outer, and r_ref have been computed
+# and defined on the same angles, angle by angle. r_inner is the list of radii from the inner tube
+# r_outer is the list of radii from the outer tube, and r_ref is the list of radii from the best estimate
+computeTubeSize <- function(r_inner, r_outer, r_ref) {
+ 
+  stopifnot(length(r_outer) == length(r_inner),
+            length(r_ref)   == length(r_inner))
+ 
+  w_abs <- r_outer - r_inner                # data-space distance
+  w_rel <- w_abs / r_ref                    # dimensionless
+ 
+  data.frame(
+    width_abs_median = median(w_abs),
+    width_abs_max    = max(w_abs),
+    width_rel_median = median(w_rel),
+    width_rel_max    = max(w_rel)
+  )
 }

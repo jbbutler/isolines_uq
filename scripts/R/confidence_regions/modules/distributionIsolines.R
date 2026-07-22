@@ -5,11 +5,11 @@
 library(mvtnorm)
 source('~/isolines_uq/scripts/R/confidence_regions/modules/karachiTools.R')
 
-drawIsoline <- function(dist, numCoords, gridUbs, gridLbs, prob) {
+drawIsoline <- function(dist, numCoords, gridUbs, gridLbs, prob, angular_extents=c(0, pi/2)) {
 
-    if (dist == 'bivt') isoline <- drawBivtIsoline(numCoords, gridUbs, gridLbs, prob)
-    if (dist == 'bivgauss') isoline <- drawBivGaussIsoline(numCoords, gridUbs, gridLbs, prob)
-    if (dist == 'karachi') isoline <- drawKarachiIsoline(numCoords, gridUbs, gridLbs, prob)
+    if (dist == 'bivt') isoline <- drawBivtIsoline(numCoords, gridUbs, gridLbs, prob, df=4, angular_extents=angular_extents)
+    if (dist == 'bivgauss') isoline <- drawBivGaussIsoline(numCoords, gridUbs, gridLbs, prob, angular_extents)
+    if (dist == 'karachi') isoline <- drawKarachiIsoline(numCoords, gridUbs, gridLbs, prob, angular_extents)
 
     return(isoline)
 
@@ -51,7 +51,7 @@ drawParetoBivtIsoline <- function(numCoords, gridUbs, gridLbs, prob, df) {
 
 }
 
-drawBivtIsoline <- function(numCoords, gridUbs, gridLbs, prob, df=4) {
+drawBivtIsoline <- function(numCoords, gridUbs, gridLbs, prob, df=4, angular_extents=c(0,pi/2)) {
     # Draw an isoline of a bivariate t distribution with a particular covariance matrix (unit variances, 0.7 covariance)
     # and 4 degrees of freedom
     #
@@ -74,7 +74,7 @@ drawBivtIsoline <- function(numCoords, gridUbs, gridLbs, prob, df=4) {
     }
 
     radii <- rep(NA, numCoords)
-    angles <- seq(0, pi/2, length.out=numCoords)
+    angles <- seq(angular_extents[1], angular_extents[2], length.out=numCoords)
     maxRad <- sqrt(sum((gridUbs-gridLbs)**2))
 
     # for each angle in first quadrant, find radius that gives a point with desired exceedance probability
@@ -93,7 +93,7 @@ drawBivtIsoline <- function(numCoords, gridUbs, gridLbs, prob, df=4) {
 
 }
 
-drawBivGaussIsoline <- function(numCoords, gridUbs, gridLbs, prob) {
+drawBivGaussIsoline <- function(numCoords, gridUbs, gridLbs, prob, angular_extents=c(0, pi/2)) {
     # Draw an isoline of a zero-mean bivariate normal distribution with covariance matrix with unit variances and
     # covariance of 0.7
     #
@@ -116,7 +116,7 @@ drawBivGaussIsoline <- function(numCoords, gridUbs, gridLbs, prob) {
     }
 
     radii <- rep(NA, numCoords)
-    angles <- seq(0, pi/2, length.out=numCoords)
+    angles <- seq(angular_extents[1], angular_extents[2], length.out=numCoords)
     maxRad <- sqrt(sum((gridUbs-gridLbs)**2))
 
     # for each angle in first quadrant, find radius that gives a point with desired exceedance probability
@@ -135,7 +135,7 @@ drawBivGaussIsoline <- function(numCoords, gridUbs, gridLbs, prob) {
 
 }
 
-drawKarachiIsoline <- function(numCoords, gridUbs, gridLbs, prob) {
+drawKarachiIsoline <- function(numCoords, gridUbs, gridLbs, prob, angular_extents=c(0, pi/2)) {
     # Draw an isoline of the fitted beta-kernel Karachi data distribution using data from Cooley et al. (2019) 
     # with bandwidth parameter chosen via 5-fold CV in runKarachiCV.R 
     #
@@ -159,7 +159,7 @@ drawKarachiIsoline <- function(numCoords, gridUbs, gridLbs, prob) {
     }
 
     radii <- rep(NA, numCoords)
-    angles <- seq(0, pi/2, length.out=numCoords)
+    angles <- seq(angular_extents[1], angular_extents[2], length.out=numCoords)
     maxRad <- sqrt(sum((gridUbs-gridLbs)**2))
 
     # for each angle in first quadrant, find radius that gives a point with desired exceedance probability
