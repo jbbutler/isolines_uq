@@ -1,6 +1,5 @@
 name: isolinesR
 channels:
-  - defaults
   - conda-forge
 dependencies:
   - jupyter_client
@@ -25,4 +24,3 @@ dependencies:
   - r-matrixstats
   - r-latex2exp
   - r-scales
-prefix: /global/homes/j/jbbutler/.conda/envs/isolinesR

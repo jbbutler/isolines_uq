@@ -1,0 +1,18 @@
+#!/bin/bash
+#SBATCH --job-name bivkarachi_sims_10000
+#SBATCH --nodes 1
+#SBATCH --output bivkarachi_sims_10000.out
+#SBATCH --error bivkarachi_sims_10000.err
+#SBATCH -p low
+#SBATCH --cpus-per-task 24
+#SBATCH --mail-type BEGIN,END,FAIL
+#SBATCH --mail-user butlerj@berkeley.edu
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate isolinesR
+export OMP_NUM_THREADS=1
+
+DF_SAVE_PATH="~/isolines_uq/outputs/simulations/extremal/"
+FULL_SAVE_PATH="/scratch/users/butlerj/isolines/"
+
+Rscript 1.1.1.0_bivkarachi_gamma1_0.5_bootmargs_hrv_10000sample.R --save_full_path "$FULL_SAVE_PATH" --save_df_path "$DF_SAVE_PATH" --n_cores 24

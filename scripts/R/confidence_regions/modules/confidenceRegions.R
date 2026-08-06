@@ -1097,51 +1097,55 @@ computeEmpiricalRegionSymmetric <- function(dat, alphas, p, B, lbs, verbose=FALS
     return(res_lst)
 }
 
-computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
-    # Function that constructs confidence tube(s) for a p-isoline of interest, given some data.
-    # Will return multiple tube constructions if multiple alphas are passed as an argument (NOTE:
-    # even if only one alpha is desired, you still must put it in an R vector). This function
-    # uses the empirical survival function, and thus is more appropriate for use with non-extreme
-    # isolines. As above, this function only computes the quantities needed to define
-    # a confidence tube (i.e., cminus and cplus). 
-    # it, use the drawEmpiricalRegion function.
-    # NOTE: this function differs from the previous version in that we compute both
-    # a separate lower and upper vertical bound, instead of using the same one.
-    #
-    # Arguments:
-    # dat: the data, in the form of a 2-column data.frame
-    # alphas: a vector of alphas (even if one alpha desired, must put it in a vector as well)
-    # p: the desired p-isoline to capture
-    # B: the number of bootstrap replicates
-    # lbs: the lower lefthand corner of the space on which the tube is drawn
-    # verbose: boostrap loop progress bar?
-    #
-    # Output:
-    # A list with (1) the original data, (2) a list of the c_hat estimates, one for each supplied alpha,
-    # and (3) the desired exceedance probability.
-
-    emp_isoline <- drawEmpiricalIsoline(dat=dat, n_coords=200, grid_lbs=lbs, p)
-    boot_draws_Wplus <- rep(NA, B)
-    boot_draws_Wminus <- rep(NA, B)
+computeEmpiricalRegion <- function(dat, alphas, p, B, lbs=c(0,0), ncoords=n_coords, verbose=FALSE) {
+    
+    n_dat <- nrow(dat)
+    
+    # Draw the base isoline
+    emp_isoline <- drawEmpiricalIsoline(dat=dat, n_coords=ncoords, grid_lbs=lbs, p)
+    
+    # Static hit matrix for rapid resampling
+    # Determines if data point i exceeds isoline coordinate j
+    hit_static <- (outer(dat[,1], emp_isoline[,1], '>') & 
+                   outer(dat[,2], emp_isoline[,2], '>')) * 1.0
+                   
+    boot_probs_mat <- matrix(NA, nrow=B, ncol=nrow(emp_isoline))
 
     if (verbose) pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
+    
+    # Fast Bootstrap Loop using a tabulate trick
     for (k in 1:B) {
-        boot_dat <- dat %>% sample_frac(1, replace = TRUE)
-        boot_survfunc <- vectorizedEmpSurv(emp_isoline, boot_dat)
-        boot_draws_Wplus[k] <- max(boot_survfunc-p)
-        boot_draws_Wminus[k] <- min(boot_survfunc-p)
+        # Sample just the indices
+        idx <- sample.int(n_dat, n_dat, replace=TRUE)
+        
+        # Tabulate occurrences of each index
+        w <- tabulate(idx, nbins = n_dat)
+        
+        # Matrix multiply the weights by the static hit matrix to get empirical probs
+        emp_probs <- as.numeric(w %*% hit_static) / n_dat
+        
+        boot_probs_mat[k, ] <- emp_probs
+        
         if (verbose) utils::setTxtProgressBar(pb, k)
     }
     if (verbose) close(pb)
     
+    # Bootstrap Centering (using mean instead of p)
+    mean_boot_probs <- colMeans(boot_probs_mat)
+    boot_devs <- sweep(boot_probs_mat, MARGIN = 2, STATS = mean_boot_probs, FUN = "-")
+    
+    # Extract global max and min deviations across the curve for each draw
+    boot_draws_Wplus <- apply(boot_devs, 1, max)
+    boot_draws_Wminus <- apply(boot_devs, 1, min)
+    
     c_plus_estimates <- list()
     c_minus_estimates <- list()
+    
+    # 5. Build Final Asymmetric Bounds
     for (i in 1:length(alphas)) {
-        alpha <- alphas[i]       
-        c_plus_estimate <- as.numeric(quantile(boot_draws_Wplus, probs=1-(alpha/2), type=1))
-        c_minus_estimate <- as.numeric(quantile(boot_draws_Wminus, probs=alpha/2, type=1))
-        c_plus_estimates[as.character(alpha)] <- c_plus_estimate
-        c_minus_estimates[as.character(alpha)] <- c_minus_estimate
+        alpha <- alphas[i]        
+        c_plus_estimates[[as.character(alpha)]] <- as.numeric(quantile(boot_draws_Wplus, probs=1-(alpha/2), type=1))
+        c_minus_estimates[[as.character(alpha)]] <- as.numeric(quantile(boot_draws_Wminus, probs=alpha/2, type=1))
     }
 
     survFunc <- function(pts) {
@@ -1149,12 +1153,261 @@ computeEmpiricalRegion <- function(dat, alphas, p, B, lbs, verbose=FALSE) {
         return(survProb)
     }
 
-    res_lst <- list()
-    res_lst$dat <- dat
-    res_lst$c_plus_estimates <- c_plus_estimates
-    res_lst$c_minus_estimates <- c_minus_estimates
-    res_lst$p <- p
-    res_lst$survFunc <- survFunc
+    r_ref <- sqrt((emp_isoline[,1] - lbs[1])^2 + (emp_isoline[,2] - lbs[2])^2)
+
+    size_estimates <- list()
+    for (i in 1:length(alphas)) {
+        alpha  <- alphas[i]
+        akey   <- as.character(alpha)
+        cplus  <- as.numeric(c_plus_estimates[[akey]])
+        cminus <- as.numeric(c_minus_estimates[[akey]])
+
+        # Unboundedness check: c_minus <= -p  <=>  outer survival level p + c_minus <= 0,
+        # an unattainable level, so the outer wall never closes.
+        if (cminus <= -p) {
+            size_estimates[[akey]] <- data.frame(
+                is_unbounded     = TRUE,
+                width_abs_median = NA_real_,
+                width_abs_max    = NA_real_,
+                width_rel_median = NA_real_,
+                width_rel_max    = NA_real_
+            )
+        } else {
+            s_hi <- p + cplus     # inner wall: higher survival -> smaller radius
+            s_lo <- p + cminus    # outer wall: lower  survival -> larger  radius
+
+            inner_iso <- drawEmpiricalIsoline(dat=dat, n_coords=ncoords, grid_lbs=lbs, s_hi)
+            outer_iso <- drawEmpiricalIsoline(dat=dat, n_coords=ncoords, grid_lbs=lbs, s_lo)
+
+            r_inner <- sqrt((inner_iso[,1] - lbs[1])^2 + (inner_iso[,2] - lbs[2])^2)
+            r_outer <- sqrt((outer_iso[,1] - lbs[1])^2 + (outer_iso[,2] - lbs[2])^2)
+
+            sz <- computeTubeSize(r_inner, r_outer, r_ref)
+            size_estimates[[akey]] <- cbind(data.frame(is_unbounded = FALSE), sz)
+        }
+    }
+
+    # Compile result object
+    res_lst <- list(
+        dat = dat,
+        c_plus_estimates = c_plus_estimates,
+        c_minus_estimates = c_minus_estimates,
+        p = p,
+        survFunc = survFunc,
+        emp_isoline = emp_isoline,
+        size_estimates = size_estimates,
+        transformed=FALSE
+    )
 
     return(res_lst)
 }
+
+computeRegion_MargTransform_AD <- function(dat, alphas, p, B, gamma1 = 1/2, gamma2 = 2/3,
+                                           ncoords = 50, lbs = c(0, 0),
+                                           progress_bar = FALSE, verbose = FALSE) {
+
+    n_dat <- nrow(dat)
+    q1 <- n_dat^(-gamma1); q2 <- n_dat^(-gamma2); qn <- q1
+    prob_floor <- 0.5 / n_dat
+
+    # --- Stage 1: full-sample marginal fits (plain MLE; clamp inside ptilde) ---
+    fit1 <- fit_marginal(dat[,1], gamma1)
+    fit2 <- fit_marginal(dat[,2], gamma1)
+
+    # --- Stage 2: standardize the data ---
+    Z <- standardize(dat[,1], dat[,2], fit1, fit2)
+
+    # --- Stage 3: standardized isoline (xi = 1) + fixed monitoring points ---
+    thetas <- seq(0, pi/2, length.out = ncoords)
+    rq1_vec <- std_radial_anchor(Z, thetas, q1)
+    rp_std  <- rq1_vec * (q1 / p)                       # projection, known xi = 1
+    ziso    <- cbind(rp_std * cos(thetas), rp_std * sin(thetas))
+    x_iso   <- backmap(ziso, fit1, fit2)                # FIXED original-scale points
+
+    # --- Stage 5a: radial pad (copula channel), standardized scale ---
+    rq2_vec <- rq1_vec * (q1 / q2)
+    zq2 <- cbind(rq2_vec * cos(thetas), rq2_vec * sin(thetas))
+    emp_q2 <- colMeans(outer(Z[,1], zq2[,1], ">") & outer(Z[,2], zq2[,2], ">"))
+    delta_P <- emp_q2 - q2
+    C_theta <- delta_P / (q2 * log(q1 / q2))
+    beta_frac_theta <- C_theta * log(q1 / p)            # = M0 * fractional gap
+    beta_frac_pos <- max(0, max(beta_frac_theta))
+    beta_frac_neg <- max(0, -min(beta_frac_theta))
+
+    # --- Stage 5b: marginal pad (transform channel), two-anchor per margin ---
+    M0 <- log(q1 / p) / log(q1 / q2)
+    xq2_1 <- qblend(q2, fit1); xq2_2 <- qblend(q2, fit2)
+    B_marg1 <- mean(dat[,1] > xq2_1) / q2 - 1
+    B_marg2 <- mean(dat[,2] > xq2_2) / q2 - 1
+    b_marg  <- M0 * max(abs(B_marg1), abs(B_marg2))     # kappa = 1 under AD
+
+    # --- Stage 4: bootstrap with margins refit per draw ---
+    boot_probs_mat <- matrix(NA_real_, nrow = B, ncol = ncoords)
+    n_fallback <- 0L
+    n_clamp    <- 0L
+    zmax <- 2 * n_dat                                    # clamped upper standardized value
+
+    if (progress_bar) pbb <- utils::txtProgressBar(min = 0, max = B, style = 3)
+    for (k in 1:B) {
+        idx <- sample.int(n_dat, n_dat, replace = TRUE)
+        d1 <- dat[idx, 1]; d2 <- dat[idx, 2]
+
+        f1b <- fit_marginal(d1, gamma1, fallback = fit1)
+        f2b <- fit_marginal(d2, gamma1, fallback = fit2)
+        n_fallback <- n_fallback + f1b$used_fallback + f2b$used_fallback
+
+        Zb <- standardize(d1, d2, f1b, f2b)
+        if (any(Zb >= zmax - 1e-9)) n_clamp <- n_clamp + 1L   # upper clamp fired this draw
+
+        # standardized coordinates of the FIXED original-scale monitoring points
+        zx <- standardize(x_iso[,1], x_iso[,2], f1b, f2b)
+
+        probs_b <- std_blended_surv_ad(zx, Zb, qn)
+        boot_probs_mat[k, ] <- log(pmax(probs_b, prob_floor))
+        if (progress_bar) utils::setTxtProgressBar(pbb, k)
+    }
+    if (progress_bar) close(pbb)
+
+    # --- centered log deviations, sup/inf, quantiles ---
+    mean_log_boot <- colMeans(boot_probs_mat)
+    boot_log_devs <- sweep(boot_probs_mat, MARGIN = 2, STATS = mean_log_boot, FUN = "-")
+    boot_draws_Wplus  <- apply(boot_log_devs, 1, max)
+    boot_draws_Wminus <- apply(boot_log_devs, 1, min)
+
+    c_plus_estimates <- list(); c_minus_estimates <- list()
+    raw_c_plus_estimates <- list(); raw_c_minus_estimates <- list()
+    size_estimates <- list()
+
+    for (i in 1:length(alphas)) {
+        alpha <- alphas[i]
+        akey <- as.character(alpha)
+
+        d_plus_log  <- as.numeric(quantile(boot_draws_Wplus,  probs = 1 - (alpha/2)))
+        d_minus_log <- as.numeric(quantile(boot_draws_Wminus, probs = (alpha/2)))
+
+        raw_c_plus_estimates[[akey]]  <- p * exp(d_plus_log)  - p
+        raw_c_minus_estimates[[akey]] <- p * exp(d_minus_log) - p
+
+        # cross-mapped radial pads + symmetric marginal pad
+        cplus  <- p * exp(d_plus_log  + beta_frac_neg + b_marg) - p
+        cminus <- p * exp(d_minus_log - beta_frac_pos - b_marg) - p
+
+        c_plus_estimates[[akey]]  <- cplus
+        c_minus_estimates[[akey]] <- cminus
+
+        # --- tube size (bias-corrected walls) ---
+        s_lo <- p + cminus
+        if (s_lo <= 0) {   # inert on the log scale; kept for interface parity
+            size_estimates[[akey]] <- data.frame(
+                is_unbounded = TRUE,
+                width_abs_median = NA_real_, width_abs_max = NA_real_,
+                width_rel_median = NA_real_, width_rel_max = NA_real_)
+        } else {
+            # closed-form standardized wall radii (xi = 1); cap the inner wall at qn
+            # so the inversion stays in the projection branch
+            s_hi <- min(p + cplus, 0.999 * qn)
+            r_in_std  <- rp_std * (p / s_hi)
+            r_out_std <- rp_std * (p / s_lo)
+
+            inner_iso <- backmap(cbind(r_in_std * cos(thetas),  r_in_std * sin(thetas)),  fit1, fit2)
+            outer_iso <- backmap(cbind(r_out_std * cos(thetas), r_out_std * sin(thetas)), fit1, fit2)
+
+            # original-scale radii from lbs; clamp coordinates into the quadrant so
+            # negative empirical minima at the axes don't pollute the radii
+            rad <- function(iso) sqrt((pmax(iso[,1], lbs[1]) - lbs[1])^2 +
+                                      (pmax(iso[,2], lbs[2]) - lbs[2])^2)
+            r_inner <- rad(inner_iso)
+            r_outer <- rad(outer_iso)
+            r_ref   <- rad(x_iso)
+
+            sz <- computeTubeSize(r_inner, r_outer, r_ref)
+            size_estimates[[akey]] <- cbind(data.frame(is_unbounded = FALSE), sz)
+        }
+    }
+
+    # composed clamped survival estimator (the estimator of record)
+    survFunc <- function(pts) {
+        pts <- as.matrix(pts)
+        zq <- standardize(pts[,1], pts[,2], fit1, fit2)
+        std_blended_surv_ad(zq, Z, qn)
+    }
+
+    res_lst <- list(
+        dat = dat, p = p, gamma1 = gamma1, gamma2 = gamma2,
+        fit1 = fit1[c("u","sigma","xi","q1")], fit2 = fit2[c("u","sigma","xi","q1")],
+        thetas = thetas, r_naive = rp_std, x_iso = x_iso,
+        beta_frac_pos = beta_frac_pos, beta_frac_neg = beta_frac_neg,
+        b_marg = b_marg, B_marg1 = B_marg1, B_marg2 = B_marg2,
+        c_plus_estimates = c_plus_estimates, c_minus_estimates = c_minus_estimates,
+        raw_c_plus_estimates = raw_c_plus_estimates, raw_c_minus_estimates = raw_c_minus_estimates,
+        size_estimates = size_estimates,
+        fallback_frac = n_fallback / (2 * B),
+        clamp_frac    = n_clamp / B,
+        survFunc = survFunc,
+        transformed = FALSE
+    )
+
+    return(res_lst)
+}
+
+computeRegion_HRV_Raw <- function(dat, alphas, p, B, gamma1 = 1/2,
+                                  ncoords = 50, lbs = c(0, 0), w_int = 0.02) {
+    n_dat <- nrow(dat)
+    q1 <- n_dat^(-gamma1); qn <- q1
+    prob_floor <- 0.5 / n_dat
+
+    fit1 <- fit_marginal(dat[,1], gamma1)
+    fit2 <- fit_marginal(dat[,2], gamma1)
+    Z <- standardize(dat[,1], dat[,2], fit1, fit2)
+    eta_hat <- estimate_xi_hill(pmin(Z[,1], Z[,2]), gamma1)
+
+    ## ---- pure-HRV radial tube on the interior cone (constant eta) ----
+    theta_cut <- atan(w_int / (1 - w_int))
+    thetas_int <- seq(theta_cut, pi/2 - theta_cut, length.out = ncoords)
+    rq1_int <- std_radial_anchor(Z, thetas_int, q1)
+    rp_int  <- rq1_int * (q1 / p)^eta_hat
+    ziso_int  <- cbind(rp_int * cos(thetas_int), rp_int * sin(thetas_int))
+    x_iso_int <- backmap(ziso_int, fit1, fit2)
+
+    ## ---- bootstrap: raw (variance-only) walls ----
+    m_int <- nrow(ziso_int)
+    boot_int <- matrix(NA_real_, B, m_int)
+    n_fallback <- 0L; n_clamp <- 0L; zmax <- 2 * n_dat
+    for (k in 1:B) {
+        idx <- sample.int(n_dat, n_dat, replace = TRUE)
+        d1 <- dat[idx, 1]; d2 <- dat[idx, 2]
+        f1b <- fit_marginal(d1, gamma1, fallback = fit1)
+        f2b <- fit_marginal(d2, gamma1, fallback = fit2)
+        n_fallback <- n_fallback + f1b$used_fallback + f2b$used_fallback
+        Zb <- standardize(d1, d2, f1b, f2b)
+        if (any(Zb >= zmax - 1e-9)) n_clamp <- n_clamp + 1L
+        eta_b <- estimate_xi_hill(pmin(Zb[,1], Zb[,2]), gamma1)
+        zx_int <- standardize(x_iso_int[,1], x_iso_int[,2], f1b, f2b)
+        boot_int[k, ] <- log(pmax(std_blended_surv_hrvconst(zx_int, Zb, qn, eta_b), prob_floor))
+    }
+
+    devs <- sweep(boot_int, 2, colMeans(boot_int), FUN = "-")
+    Wp <- apply(devs, 1, max); Wm <- apply(devs, 1, min)
+    rcps <- list(); rcms <- list()
+    for (alpha in alphas) {
+        ak <- as.character(alpha)
+        dp <- as.numeric(quantile(Wp, probs = 1 - alpha/2))
+        dm <- as.numeric(quantile(Wm, probs = alpha/2))
+        rcps[[ak]] <- p * exp(dp) - p
+        rcms[[ak]] <- p * exp(dm) - p
+    }
+
+    sf_hrv <- function(pts) { pts <- as.matrix(pts)
+        zq <- standardize(pts[,1], pts[,2], fit1, fit2)
+        std_blended_surv_hrvconst(zq, Z, qn, eta_hat) }
+
+    list(dat = dat, p = p, gamma1 = gamma1,
+         fit1 = fit1[c("u","sigma","xi","q1")], fit2 = fit2[c("u","sigma","xi","q1")],
+         eta_hat = eta_hat, w_int = w_int,
+         fallback_frac = n_fallback / (2 * B), clamp_frac = n_clamp / B,
+         interior = list(raw_c_plus_estimates = rcps, raw_c_minus_estimates = rcms,
+                         survFunc = sf_hrv, thetas = thetas_int, x_iso = x_iso_int,
+                         projection = "hrv_const"),
+         transformed = FALSE)
+}
+

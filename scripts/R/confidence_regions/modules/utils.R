@@ -8,6 +8,134 @@ library(matrixStats)
 
 source('~/isolines_uq/scripts/R/confidence_regions/modules/karachiTools.R')
 
+#### Extreme Tube Helpers ####
+
+# negative log-likelihood, parametrized (log sigma, xi); support violations
+# penalized (that IS the likelihood being -Inf, not an added constraint)
+gpd_nll <- function(par, exc) {
+    sigma <- exp(par[1]); xi <- par[2]
+    z <- 1 + xi * exc / sigma
+    if (any(z <= 0) || !is.finite(sigma)) return(1e10)
+    if (abs(xi) < 1e-8) {
+        sum(log(sigma) + exc / sigma)
+    } else {
+        sum(log(sigma) + (1/xi + 1) * log(z))
+    }
+}
+
+# plain MLE; moment-estimator start; returns moment estimates with failed=TRUE
+# if optim errors/doesn't converge (caller decides the fallback)
+fit_gpd_mle <- function(exc) {
+    m <- mean(exc); v <- var(exc)
+    xi0 <- 0.5 * (1 - m^2 / v)
+    if (!is.finite(xi0)) xi0 <- 0.1
+    xi0 <- max(min(xi0, 0.9), -0.4)
+    sigma0 <- m * (1 - xi0); if (!is.finite(sigma0) || sigma0 <= 0) sigma0 <- m
+    out <- tryCatch(
+        optim(c(log(sigma0), xi0), gpd_nll, exc = exc, method = "Nelder-Mead"),
+        error = function(e) NULL)
+    if (is.null(out) || out$convergence != 0 || !is.finite(out$par[1])) {
+        return(list(sigma = sigma0, xi = xi0, failed = TRUE))
+    }
+    list(sigma = exp(out$par[1]), xi = out$par[2], failed = FALSE)
+}
+
+# fit one margin: empirical body + GPD tail above the (1 - q1) empirical quantile.
+# On MLE failure, use `fallback` (the full-sample fit) if provided, else the
+# moment estimates. used_fallback is counted by the caller.
+fit_marginal <- function(x, gamma1, fallback = NULL) {
+    n <- length(x)
+    q1 <- n^(-gamma1)
+    xs <- sort(x)
+    u <- quantile(x, probs = 1 - q1, type = 1, names = FALSE)
+    exc <- x[x > u] - u
+    g <- fit_gpd_mle(exc)
+    used_fallback <- FALSE
+    if (g$failed && !is.null(fallback)) {
+        g <- list(sigma = fallback$sigma, xi = fallback$xi)
+        used_fallback <- TRUE
+    }
+    list(u = u, sigma = g$sigma, xi = g$xi, q1 = q1, n = n,
+         x_sorted = xs, used_fallback = used_fallback)
+}
+
+# forward transform: blended fitted CDF, clamped to [1/(2n), 1 - 1/(2n)]
+ptilde <- function(t, fit) {
+    n <- fit$n
+    Femp <- findInterval(t, fit$x_sorted) / n
+    y <- pmax(t - fit$u, 0)
+    if (abs(fit$xi) < 1e-8) {
+        Fgpd <- 1 - fit$q1 * exp(-y / fit$sigma)
+    } else {
+        Fgpd <- 1 - fit$q1 * pmax(1 + fit$xi * y / fit$sigma, 0)^(-1/fit$xi)
+    }
+    Fv <- ifelse(t <= fit$u, Femp, Fgpd)
+    pmin(pmax(Fv, 1/(2*n)), 1 - 1/(2*n))     # <- the clamp safeguard
+}
+
+# inverse transform: survival prob s -> original-scale quantile
+qblend <- function(s, fit) {
+    emp_idx <- pmax(1L, pmin(fit$n, as.integer(ceiling((1 - s) * fit$n))))
+    x_emp <- fit$x_sorted[emp_idx]
+    if (abs(fit$xi) < 1e-8) {
+        x_gpd <- fit$u + fit$sigma * log(fit$q1 / s)
+    } else {
+        x_gpd <- fit$u + (fit$sigma / fit$xi) * ((s / fit$q1)^(-fit$xi) - 1)
+    }
+    ifelse(s >= fit$q1, x_emp, x_gpd)
+}
+
+# Pareto standardization of a data matrix / point matrix
+standardize <- function(x1, x2, fit1, fit2) {
+    cbind(1 / (1 - ptilde(x1, fit1)), 1 / (1 - ptilde(x2, fit2)))
+}
+
+# back-map standardized points to the original scale (T^{-1} then qblend)
+backmap <- function(zpts, fit1, fit2) {
+    s1 <- pmin(1 / pmax(zpts[, 1], 1), 1)
+    s2 <- pmin(1 / pmax(zpts[, 2], 1), 1)
+    cbind(qblend(s1, fit1), qblend(s2, fit2))
+}
+
+# radial anchor at level qlev along arbitrary angles (axis-aware; Z > 0 always)
+std_radial_anchor <- function(Z, thetas, qlev) {
+    rq <- rep(NA_real_, length(thetas))
+    ax0  <- which(thetas == 0)
+    ax90 <- which(thetas == pi/2)
+    if (length(ax0))  rq[ax0]  <- quantile(Z[,1], probs = 1 - qlev, type = 1, names = FALSE)
+    if (length(ax90)) rq[ax90] <- quantile(Z[,2], probs = 1 - qlev, type = 1, names = FALSE)
+    intr <- which(!(thetas == 0 | thetas == pi/2))
+    if (length(intr)) {
+        M <- pmin(Z[,1] %o% (1/cos(thetas[intr])), Z[,2] %o% (1/sin(thetas[intr])))
+        rq[intr] <- colQuantiles(M, probs = 1 - qlev, type = 1, drop = TRUE)
+    }
+    rq
+}
+
+# blended standardized survival at query points: empirical above qn,
+# xi = 1 radial projection below
+std_blended_surv_ad <- function(zpts, Z, qn) {
+    zpts <- as.matrix(zpts)
+    emp <- colMeans(outer(Z[,1], zpts[,1], ">") & outer(Z[,2], zpts[,2], ">"))
+    theta <- atan2(zpts[,2], zpts[,1])
+    rp <- sqrt(rowSums(zpts^2))
+    rq <- std_radial_anchor(Z, theta, qn)
+    tail_probs <- (rq / rp) * qn                 # xi = 1: (rq/rp)^{1/xi} = rq/rp
+    ifelse(emp >= qn, emp, tail_probs)
+}
+
+std_blended_surv_hrvconst <- function(zpts, Z, qn, eta_hat) {
+    zpts <- as.matrix(zpts)
+    emp <- colMeans(outer(Z[, 1], zpts[, 1], ">") & outer(Z[, 2], zpts[, 2], ">"))
+    theta <- atan2(zpts[, 2], zpts[, 1])
+    rp <- sqrt(rowSums(zpts^2))
+    rq <- std_radial_anchor(Z, theta, qn)
+    tail_probs <- ((rq / rp)^(1 / eta_hat)) * qn
+    ifelse(emp >= qn, emp, tail_probs)
+}
+        
+##########
+
 # Fraga Alves, Gomes & de Haan (2003) estimator of the second-order parameter rho.
 # Works on the LOG-EXCESSES V_{ik} = log(X_{n-i+1:n}) - log(X_{n-k:n}), i=1..k.
 # 
